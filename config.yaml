@@ -1,0 +1,100 @@
+# Primer Design
+
+# Debug Mode
+DEBUG: True
+
+# Order Template
+order_template:
+    sh: ./order_template/上海百力格DNA合成订购表.xlsx
+    hz: ./order_template/湖州河马生物DNA合成订购表.xlsx
+    sg: ./order_template/上海生工生物引物合成订购表.xlsx
+    dg: ./order_template/上海迪赢生物引物合成订购表.xlsx
+
+# pan-cancer hotspot mutation
+loci_hots: ./order_template/pancancer_hotspot_mutation.xlsx
+
+# Email
+emails:
+    login:
+          host: smtp.exmail.qq.com
+          port: 465
+          user: fenglibao@topgen.com.cn
+          password: 9KppaTwvB32GQUfp
+          from: fenglibao@topgen.com.cn
+          from_alias: TopGen-PD
+    setup:
+          log_toaddrs:
+            - fenglibao@topgen.com.cn
+          log_cc:
+            - fenglibao@topgen.com.cn
+          error_toaddrs:
+            - fenglibao@topgen.com.cn
+            - kaizhentian@topgen.com.cn
+          qc_toaddrs:
+            - wangruyi@sangon.com
+            - qiuting@topgen.com.cn
+            - wangtianqin@topgen.com.cn
+            - chenhuiling@topgen.com.cn
+            - linliangyu@topgen.com.cn
+            - ngs@topgen.com.cn
+            - yuhaibo@topgen.com.cn
+            - fenglibao@topgen.com.cn
+          order_toaddrs:
+            - synth@sangon.com
+          cc:
+            - wangruyi@sangon.com
+            - qiuting@topgen.com.cn
+            - wangtianqin@topgen.com.cn
+            - chenhuiling@topgen.com.cn
+            - linliangyu@topgen.com.cn
+            - ngs@topgen.com.cn
+            - yuhaibo@topgen.com.cn
+            - fenglibao@topgen.com.cn
+          bcc:
+            - fenglibao@topgen.com.cn
+
+
+# CMS URL
+CMS_URL:
+    accessToken:
+        post_url: http://cms.topgen.com.cn/user/login/auth
+        post_data: {'userName': 'bioinfo', 'password': 'Top50800383', 'rememberMe': '1'}
+    apiToken:
+        post_url: http://172.16.10.66/api/v1/auth/login
+        post_data: {'username': 'zsl', 'password': '111111'}
+    sampleInfo:
+        get_url: http://cms.topgen.com.cn/sample/sample/search
+    check_audit:
+        post_url: http://172.16.10.66/api/v1/backend/sample/check-audit
+
+# URL header
+header: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'}
+
+# MRD Project ID
+MRD_ID: ['0204046', '0204047', '0204048', '0801027']
+
+# primer design url
+mfe_primer: https://mfeprimer3.igenetech.com/muld
+
+# CMS API
+API_CMS:
+    old_cms:
+        post_url: http://cms.topgen.com.cn/user/login/auth
+        post_data: {'userName': 'bioinfo', 'password': 'Top50800383', 'rememberMe': '1'}
+    old_search:
+        get_url: http://cms.topgen.com.cn/sample/sample/search
+    new_cms:
+        detail_url: https://cms.hztopgen.com.cn/api/topgenApi/topgen/findSampleDetil
+        order_url: https://cms.hztopgen.com.cn/api/topgenApi/topgen/findOrderDetil
+        # new_header = {"Authorization": "Basic {}".format(str(base64.b64encode("NGSLC:Topgen123".encode("utf-8")), "utf-8"))}
+        new_header: {'Authorization': 'Basic TkdTTEM6VG9wZ2VuMTIz'}
+    audit_cms:
+        get_url: http://172.16.10.66/api/v1/sample-info?sample_sn=
+
+
+# database
+DB_CONFIG:
+    host: localhost
+    port: 3306
+    user: root
+    passwd: root
