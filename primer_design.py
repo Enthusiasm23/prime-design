@@ -20,7 +20,11 @@ import logging
 import argparse
 import yaml
 import datetime
+import openpyxl
 from urllib.parse import urlparse
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -608,7 +612,7 @@ def first_check_driver(df_driver, url, outcome_dir, sampleID):
     df_res, save_path = design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix='driver')
 
     # Save the DataFrame to a table in the database.
-    save_to_database(df_res, table_name='test_primers')
+    save_to_database(df_res, table_name='mfe_primers')
 
     return df_res['TemplateID'].to_list()
 
@@ -667,7 +671,8 @@ def select_site_logic(df_no_driver, df_res, not_used, design_num, driver_list, d
         primer_string = driver_str + result_string if driver_str else result_string
     else:
         new_design_num, new_driver_list = update_primer_design(df_res, driver_list, design_num)
-        result_string, not_used = select_site(df_no_driver, df_res, not_used, num=new_design_num, driver=new_driver_list)
+        result_string, not_used = select_site(df_no_driver, df_res, not_used, num=new_design_num,
+                                              driver=new_driver_list)
         primer_string = driver_str + result_string if driver_str else result_string
 
     return primer_string, not_used
@@ -699,18 +704,467 @@ def perform_primer_design(df_no_driver, sampleID, url, outcome_dir, design_num, 
         logger.info(f'样本 - {sampleID} 第 {num} 次引物设计')
 
         # Select sites for primer design
-        result_string, not_used = select_site_logic(df_no_driver, df_res, not_used, design_num, driver_list, driver_str, num)
+        result_string, not_used = select_site_logic(df_no_driver, df_res, not_used, design_num, driver_list, driver_str,
+                                                    num)
 
         # Design primers and process results
         df_res, save_path = design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix=num)
 
         # Save the DataFrame to a table in the database.
-        save_to_database(df_res, table_name='test_primers')
+        save_to_database(df_res, table_name='mfe_primers')
 
         if should_exit_loop(df_res, not_used):
             break
 
     return df_res
+
+
+def process_primer_results(df_res, df_design, sampleID, skip_snp_design, send_email=True):
+    """
+    Processes primer results for quality control and prepares the final data frame.
+
+    :param df_res: DataFrame containing primer results.
+    :param df_design: DataFrame containing source data.
+    :param sampleID: Sample ID.
+    :param skip_snp_design: Boolean flag to skip SNP design.
+    :param send_email: Flag indicating whether to send an email.
+    :return: Processed DataFrame df_sample.
+    """
+
+    def send_quality_control_email(reason, sample_count):
+        subject = f'样本引物结果检查警告 - {sampleID}'
+        message = f"警告：样本ID {sampleID} 引物结果检查\n质控结果：{reason}数量为 {sample_count}\n提示：当引物结果数量小于12个或是自身位点小于8个时，不满足质控要求，需要审核人员审核处理。\n程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。"
+        if send_email:
+            emit(subject, message)
+        logging.error(f'样本ID：{sampleID}, 引物结果未通过质控，请立即检查相关数据并采取适当措施！')
+        sys.exit(1)
+
+    if not skip_snp_design:
+        if df_res.shape[0] < 12:
+            send_quality_control_email('引物结果', df_res.shape[0])
+        elif 'hots' in df_design.columns:
+            df_hots = pd.merge(df_res[['TemplateID']], df_design[['TemplateID', 'hots']],
+                               on='TemplateID').drop_duplicates('TemplateID', keep='first')
+            if df_hots[df_hots['hots'] == 0].shape[0] < 8:
+                send_quality_control_email('自身位点', df_hots[df_hots['hots'] == 0].shape[0])
+
+    if not skip_snp_design:
+        if df_res.shape[0] < 12:
+            send_quality_control_email('引物结果', df_res.shape[0])
+        elif 'hots' in df_design.columns:
+            df_hots = pd.merge(df_res[['TemplateID']], df_design[['TemplateID', 'hots']],
+                               on='TemplateID').drop_duplicates('TemplateID', keep='first')
+            if df_hots[df_hots['hots'] == 0].shape[0] < 8:
+                send_quality_control_email('自身位点', df_hots[df_hots['hots'] == 0].shape[0])
+
+    if 'hots' in df_design.columns and 'Start_Position' in df_design.columns and 'pos' in df_design.columns:
+        df_design['pos'] = df_design['Start_Position']
+    elif 'pos' in df_design.columns and 'Start_Position' not in df_design.columns:
+        df_design['pos'] = df_design['pos'] + 1
+
+    save_to_database(df_design, table_name='mrd_selection')
+
+    df_sample = pd.merge(df_res, df_design, on='TemplateID').drop_duplicates('TemplateID', keep='first')
+
+    return df_sample
+
+
+def process_primer_sample(df_sample):
+    """
+    Processes the primer sample data by rearranging columns and adjusting formats.
+
+    :param df_sample: DataFrame containing primer sample data.
+    :return: Processed DataFrame with specified columns in front.
+    """
+    # Calculate F_id, R_id and primerID
+    df_sample['F_id'] = df_sample.apply(
+        lambda row: f'P{row["sampleSn"].split("NGS")[-1].split("W")[0]}-{row.name + 1:02d}F', axis=1)
+    df_sample['R_id'] = df_sample.apply(
+        lambda row: f'P{row["sampleSn"].split("NGS")[-1].split("W")[0]}-{row.name + 1:02d}R', axis=1)
+    df_sample['primerID'] = df_sample.apply(
+        lambda row: f'P{row["sampleSn"].split("NGS")[-1].split("W")[0]}-{row.name + 1:02d}', axis=1)
+
+    # Convert primer sequences to uppercase
+    df_sample['ForwardPrimer(Fp)'] = df_sample['ForwardPrimer(Fp)'].apply(lambda x: x.upper())
+    df_sample['ReversePrimer(Rp)'] = df_sample['ReversePrimer(Rp)'].apply(lambda x: x.upper())
+
+    # Add Selected columns and calculate generic sequence sizes
+    df_sample['Selected'] = 1
+    df_sample['GnlAmpSize (bp)'] = df_sample['AmpSize(bp)'] + 140
+
+    # Add failed_reason columns
+    df_sample['failed_reason'] = ''
+
+    # Specified columns
+    specified_columns1 = ['sampleSn', 'chrom', 'pos', 'ref', 'alt', 'Selected', 'failed_reason']
+    specified_columns2 = ['F_id', 'R_id', 'primerID', 'GnlAmpSize (bp)']
+
+    # Gets columns other than those specified
+    other_columns = [col for col in df_sample.columns if col not in specified_columns1 + specified_columns2]
+
+    # Arrange the specified columns first, followed by the other columns
+    df_sample = df_sample[specified_columns1 + specified_columns2 + other_columns]
+
+    save_to_database(df_sample, 'primer_combined')
+
+    return df_sample
+
+
+def process_primer_order(df, mold):
+    """
+    Process the given DataFrame by combining forward and reverse primers information,
+    adding additional columns, and saving the processed DataFrame to a database.
+
+    :param df: DataFrame to be processed. It should contain columns 'sampleSn', 'F_id',
+               'ForwardPrimer(Fp)', 'R_id', and 'ReversePrimer(Rp)'.
+    :param mold: Name of the ordering company to be added to the 'OrderingCompany' column.
+    :return: Processed DataFrame with combined primer information and additional columns.
+    """
+    f_sequence_prefix = 'GTTCAGAGTTCTACAGTCCGACGATCNNWNNW'
+    r_sequence_prefix = 'CTTGGCACCCGAGAATTCCANNWNNW'
+
+    # Process forward primers
+    df_primers_f = df[['sampleSn', 'F_id', 'ForwardPrimer(Fp)']].rename(
+        columns={'F_id': 'PrimerName', 'ForwardPrimer(Fp)': 'Sequence'})
+    df_primers_f['Sequence'] = df_primers_f['Sequence'].apply(lambda x: f_sequence_prefix + x)
+
+    # Process reverse primers
+    df_primers_r = df[['sampleSn', 'R_id', 'ReversePrimer(Rp)']].rename(
+        columns={'R_id': 'PrimerName', 'ReversePrimer(Rp)': 'Sequence'})
+    df_primers_r['Sequence'] = df_primers_r['Sequence'].apply(lambda x: r_sequence_prefix + x)
+
+    # Combine processed DataFrames
+    df_combined = pd.concat([df_primers_f, df_primers_r]).sort_values('sampleSn').reset_index(drop=True)
+
+    # Add additional columns
+    df_combined['BaseCount'] = df_combined['Sequence'].apply(len)
+    df_combined['TubeCount'] = 1
+    df_combined['TotalQuantityOD'] = ''
+    df_combined['PurificationMethod'] = 'HAP'
+    df_combined['Nmoles'] = 1
+    df_combined['Modification5Prime'] = ''
+    df_combined['Modification3Prime'] = ''
+    df_combined['DualLabelModification'] = '1'
+    df_combined['Remarks'] = '1管TE溶解为50uM浓度'
+    df_combined['OrderingCompany'] = mold
+    df_combined.sort_values('PrimerName', inplace=True)
+    df_combined.reset_index(drop=True, inplace=True)
+    # Save to database
+    save_to_database(df_combined, table_name='primer_order')
+
+    return df_combined
+
+
+def write_sh_order(df_sample, dataframe, order_path, sampleID):
+    os.makedirs(order_path, exist_ok=True)
+    try:
+        if not run:
+            order_template = config['order_template']['sh']
+        else:
+            order_template = config['local_order_template']['sh']
+        wb = openpyxl.load_workbook(order_template)
+    except Exception as e:
+        logging.error(f'ERROR: {e}')
+        sys.exit(1)
+
+    ws_dna = wb['DNA合成订购表']
+
+    def write_to_sheet(data, column, start_row, sequence_prefix=None):
+        for i, value in enumerate(data):
+            if value.islower():
+                value = value.upper()
+            if sequence_prefix:
+                value = sequence_prefix + value
+            ws_dna.cell(start_row + i, column).value = value
+            ws_dna.cell(start_row + i, 5).value = 'PAGE'
+            ws_dna.cell(start_row + i, 8).value = 1
+            ws_dna.cell(start_row + i, 10).value = 2
+            ws_dna.cell(start_row + i, 11).value = 'BLG白色标签'
+            ws_dna.cell(start_row + i, 12).value = '1.5ml离心管'
+            ws_dna.cell(start_row + i, 13).value = 50
+            ws_dna.cell(start_row + i, 14).value = 'H+M'
+            ws_dna.cell(start_row + i, 15).value = '1*TE 稀释'
+
+    # Write the 'F_id' data to the sheet
+    write_to_sheet(df_sample['F_id'], 3, 20)
+
+    # Leave a blank row after writing the 'F_id' data
+    ws_dna.cell(20 + len(df_sample['F_id']), 3).value = None
+
+    # Write the 'R_id' data to the sheet
+    write_to_sheet(df_sample['R_id'], 3, 21 + len(df_sample['F_id']))
+
+    # Write the 'ForwardPrimer(Fp)' data to the sheet
+    write_to_sheet(df_sample['ForwardPrimer(Fp)'], 4, 20, "GTTCAGAGTTCTACAGTCCGACGATCNNWNNW")
+
+    # Leave a blank row after writing the 'ForwardPrimer(Fp)' data
+    ws_dna.cell(20 + len(df_sample['ForwardPrimer(Fp)']), 4).value = None
+
+    # Write the 'ReversePrimer(Rp)' data to the sheet
+    write_to_sheet(df_sample['ReversePrimer(Rp)'], 4, 21 + len(df_sample['ForwardPrimer(Fp)']),
+                   "CTTGGCACCCGAGAATTCCANNWNNW")
+    ws_trial = wb['实验用引物对（不需要订购合成）']
+
+    row_index = 1
+    # Iterate through the rows of the dataframe
+    for r in dataframe.iterrows():
+        # Get the row data
+        row_data = r[1]
+        # Get the cell values
+        values = row_data.tolist()
+        # Write the data to the sheet
+        ws_trial.append(values)
+        # Increment the row index
+        row_index += 1
+
+    # Save the workbook
+    save_file = os.path.join(order_path, '{}_{}_{}.xlsx'.format(sampleID, os.path.basename(
+        (config['order_template']['sh']).split('.')[0]), datetime.datetime.now().strftime("%Y%m%d%H%M%S")))
+    wb.save(save_file)
+    return save_file
+
+
+def write_hz_order(df_sample, dataframe, order_path, sampleID):
+    os.makedirs(order_path, exist_ok=True)
+    try:
+        if not run:
+            order_template = config['order_template']['hz']
+        else:
+            order_template = config['local_order_template']['hz']
+        wb = openpyxl.load_workbook(order_template)
+    except Exception as e:
+        logging.error(f'ERROR: {e}')
+        sys.exit(1)
+    ws_dna = wb['DNA合成订购表']
+
+    # Define a function to write the data to the sheet
+    def write_to_sheet(data, column, start_row, sequence_prefix=None):
+        for i, value in enumerate(data):
+            if value.islower():
+                value = value.upper()
+            if sequence_prefix:
+                value = sequence_prefix + value
+            ws_dna.cell(start_row + i, column).value = value
+            ws_dna.cell(start_row + i, 5).value = 2
+            ws_dna.cell(start_row + i, 7).value = 'PAGE'
+            ws_dna.cell(start_row + i, 8).value = 2
+            ws_dna.cell(start_row + i, 11).value = '1管TE溶解为50uM浓度，1管干粉'
+
+    # Write the 'F_id' data to the sheet
+    write_to_sheet(df_sample['F_id'], 2, 20)
+
+    # Leave a blank row after writing the 'F_id' data
+    ws_dna.cell(20 + len(df_sample['F_id']), 2).value = None
+
+    # Write the 'R_id' data to the sheet
+    write_to_sheet(df_sample['R_id'], 2, 21 + len(df_sample['F_id']))
+
+    # Write the 'ForwardPrimer(Fp)' data to the sheet
+    write_to_sheet(df_sample['ForwardPrimer(Fp)'], 3, 20, "GTTCAGAGTTCTACAGTCCGACGATCNNWNNW")
+
+    # Leave a blank row after writing the 'ForwardPrimer(Fp)' data
+    ws_dna.cell(20 + len(df_sample['ForwardPrimer(Fp)']), 3).value = None
+
+    # Write the 'ReversePrimer(Rp)' data to the sheet
+    write_to_sheet(df_sample['ReversePrimer(Rp)'], 3, 21 + len(df_sample['ForwardPrimer(Fp)']),
+                   "CTTGGCACCCGAGAATTCCANNWNNW")
+
+    ws_trial = wb['实验用引物对（不需要订购合成）']
+
+    row_index = 1
+    # Iterate through the rows of the dataframe
+    for r in dataframe.iterrows():
+        # Get the row data
+        row_data = r[1]
+        # Get the cell values
+        values = row_data.tolist()
+        # Write the data to the sheet
+        ws_trial.append(values)
+        # Increment the row index
+        row_index += 1
+
+    # Save the workbook
+    save_file = os.path.join(order_path, '{}_{}_{}.xlsx'.format(sampleID, os.path.basename(
+        (config['order_template']['hz']).split('.')[0]), datetime.datetime.now().strftime("%Y%m%d%H%M%S")))
+    wb.save(save_file)
+    return save_file
+
+
+def write_dg_order(df_sample, dataframe, order_path, sampleID):
+    os.makedirs(order_path, exist_ok=True)
+    try:
+        if not run:
+            order_template = config['order_template']['dg']
+        else:
+            order_template = config['local_order_template']['dg']
+        wb = openpyxl.load_workbook(order_template)
+    except Exception as e:
+        logging.error(f'ERROR: {e}')
+        sys.exit(1)
+    ws_dna = wb['订单表格']
+
+    # Define a function to write the data to the sheet
+    def write_to_sheet(data, column, start_row, sequence_prefix=None):
+        for i, value in enumerate(data):
+            if value.islower():
+                value = value.upper()
+            if sequence_prefix:
+                value = sequence_prefix + value
+            ws_dna.cell(start_row + i, column).value = value
+            # ws_dna.cell(start_row + i, 5).value = 2
+            ws_dna.cell(start_row + i, 8).value = 'PAGE'
+            ws_dna.cell(start_row + i, 14).value = 2
+            ws_dna.cell(start_row + i, 13).value = '1管TE溶解为50uM浓度，1管干粉'
+
+    # Write the 'F_id' data to the sheet
+    write_to_sheet(df_sample['F_id'], 5, 16)
+
+    # Write the 'R_id' data to the sheet
+    write_to_sheet(df_sample['R_id'], 5, 16 + len(df_sample['F_id']))
+
+    # Write the 'ForwardPrimer(Fp)' data to the sheet
+    write_to_sheet(df_sample['ForwardPrimer(Fp)'], 6, 16, "GTTCAGAGTTCTACAGTCCGACGATCNNWNNW")
+
+    # Write the 'ReversePrimer(Rp)' data to the sheet
+    write_to_sheet(df_sample['ReversePrimer(Rp)'], 6, 16 + len(df_sample['ForwardPrimer(Fp)']),
+                   "CTTGGCACCCGAGAATTCCANNWNNW")
+
+    ws_trial = wb['实验用引物对（不需要订购合成）']
+    row_index = 1
+    # Iterate through the rows of the dataframe
+    for r in dataframe.iterrows():
+        # Get the row data
+        row_data = r[1]
+        # Get the cell values
+        values = row_data.tolist()
+        # Write the data to the sheet
+        ws_trial.append(values)
+        # Increment the row index
+        row_index += 1
+    # Save the workbook
+    save_file = os.path.join(order_path, '{}_{}_{}.xlsx'.format(sampleID, os.path.basename(
+        (config['order_template']['dg']).split('.')[0]), datetime.datetime.now().strftime("%Y%m%d%H%M%S")))
+    wb.save(save_file)
+    return save_file
+
+
+def write_sg_order(df_order, df_combined, order_dir, sampleID):
+    """
+    Writes primer order data to an Excel workbook based on a template and saves it.
+
+    :param df_order: DataFrame containing the primer order data to be written to the '引物合成订购表' sheet.
+    :param df_combined: DataFrame containing additional data to be written to the '实验用引物对（不需要订购合成）' sheet.
+    :param order_dir: Directory where the output Excel file will be saved.
+    :param sampleID: Sample identifier used as part of the output file name.
+    :param config: Configuration dictionary containing the path to the order template.
+
+    :return: The path of the saved Excel workbook.
+    """
+    try:
+        order_template = config['order_template']['sg']
+        wb = openpyxl.load_workbook(order_template)
+    except Exception as e:
+        raise e
+
+    ws_dna = wb['引物合成订购表']
+
+    def write_to_sheet(dataframe, start_row):
+        """ Helper function to write data to the Excel sheet """
+        for i, row in dataframe.iterrows():
+            ws_dna.cell(start_row + i, 2, row['PrimerName'])
+            ws_dna.cell(start_row + i, 3, row['Sequence'])
+            ws_dna.cell(start_row + i, 5, row['TubeCount'])
+            ws_dna.cell(start_row + i, 7, row['PurificationMethod'])
+            ws_dna.cell(start_row + i, 8, row['Nmoles'])
+            ws_dna.cell(start_row + i, 12, row['Remarks'])
+
+    write_to_sheet(df_order, 18)
+
+    ws_trial = wb['实验用引物对（不需要订购合成）']
+    ws_trial.append(df_combined.columns.tolist())  # Write the column names
+    for index, row in df_combined.iterrows():
+        ws_trial.append(row.tolist())  # Write the data
+
+    save_file = os.path.join(order_dir,
+                             f'{sampleID}_{os.path.basename(order_template).split(".")[0]}_{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx')
+    wb.save(save_file)
+
+    return save_file
+
+
+def get_sample_status_old(sampleSn):
+    accessToken = get_cms_accessToken()
+    sampleInfo_url = config['CMS_URL']['sampleInfo']['get_url']
+    payload = {'accessToken': accessToken, "search[sampleSn][value]": sampleSn, "search[sampleSn][query]": "eq"}
+    try:
+        result = requests.get(sampleInfo_url, params=payload)
+        dicts = json.loads(result.text)
+        if len(dicts["data"]) > 0:
+            sampleStatus = dicts["data"][0]["sampleStatusShow"]
+            logging.info(f'Successfully obtained sampleStatus, sampleStatus: {sampleStatus}')
+            return sampleStatus
+        else:
+            logging.warning('ERROR: Sample ID does not exist in cms system!')
+            return 'OTHER'
+    except Exception as e:
+        logging.error(
+            f'ERROR: An error occurred while getting the item ID of the sample for the cms system. The specific reason is {e}')
+        sys.exit(1)
+
+
+def get_wes_check_status(sampleSn):
+    payload = {"fybh": sampleSn}
+    post_data = json.dumps(payload)
+    post_url = config['API_CMS']['new_cms']['detail_url']
+    header = config['API_CMS']['new_cms']['new_header']
+    response = requests.post(post_url, data=post_data, headers=header, timeout=30)
+    if response.status_code == 200:
+        sampleSn_info = json.loads(response.text)
+        if sampleSn_info['errorCode'] == '0':
+            sample_status = sampleSn_info['data']['YBFY']['YBZT']
+            return sample_status
+        else:
+            logging.error(
+                'ERROR: errorCode is {}. errorMsg is {}.'.format(sampleSn_info['errorCode'], sampleSn_info['msg']))
+            sys.exit(1)
+    else:
+        logging.error('ERROR: response.status_code is not equal to 200.')
+        sys.exit(1)
+
+
+def write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, skip_review, send_email=True):
+    df_sample = process_primer_results(df_res, df_design, sampleID, skip_snp_design, send_email=send_email)
+
+    df_processed = process_primer_sample(df_sample)
+
+    df_order = process_primer_order(df_processed, mold)
+
+    # The mold value is mapped to the corresponding function
+    order_functions = {
+        'sh': write_sh_order,
+        'hz': write_hz_order,
+        'sg': write_sg_order,
+        'dg': write_dg_order
+    }
+
+    # appropriate function is called and logged
+    if mold in order_functions:
+        primer_result = order_functions[mold](df_order, df_processed, order_dir, sampleID)
+        logger.info(f'Primer design {mold.upper()} order template writing completed.')
+    else:
+        logger.error(f'Unknown mold: {mold}')
+        sys.exit(1)
+
+    df_order_info = pd.DataFrame({
+        "SampleID": [sampleID],  # 样本ID
+        "OrderFile": [primer_result],  # 订单文件
+        "ReviewStatus": [""],  # 审核状态
+        "EmailSent": [0],  # 是否发送过邮件：0 - 未发送订购单，1 - 已发送过订购单，2 - 不需要发送订购
+        "DesignDate": [datetime.date.today()],  # 设计完成时间
+        "OrderDate": [datetime.date.today()],  # 订购时间
+        "OrderCompany": [mold]  # 订购公司
+    }, index=[0])
+    save_to_database(df_order_info, 'monitor_order')
 
 
 def execute():
@@ -721,11 +1175,14 @@ def execute():
     skip_snp_design = False
     skip_hot_design = False
     skip_driver_design = False
+    skip_review = False
     cancer_id = None
     url = config['mfe_primer']
     out_dir = 'primer_out'
     outcome_dir = os.path.join(os.path.abspath(out_dir), 'primer_outcome')
+    os.makedirs(outcome_dir, exist_ok=True)
     order_dir = os.path.join(os.path.abspath(out_dir), 'primer_order')
+    os.makedirs(order_dir, exist_ok=True)
 
     # 获取样本ID
     sampleID = get_sample_id(file_path)
@@ -740,16 +1197,18 @@ def execute():
     df = read_loci_file(file_path)
 
     # 判断和处理选点
-    df_loci = loci_examined(df, skip_snp_design, skip_hot_design, skip_driver_design, cancer_id=cancer_id,
+    df_loci = loci_examined(df.iloc[0:12], skip_snp_design, skip_hot_design, skip_driver_design, cancer_id=cancer_id,
                             send_email=send_email)
 
     # 添加 templateID
     df_design = add_templateID(df_loci)
 
     # 优先 driver 基因进行引物设计
-    df_no_driver, design_num, driver_list, driver_str = process_driver(df_design, url, outcome_dir, sampleID, skip_driver_design)
+    df_no_driver, design_num, driver_list, driver_str = process_driver(df_design, url, outcome_dir, sampleID,
+                                                                       skip_driver_design)
 
     # 循环设计引物
     df_res = perform_primer_design(df_no_driver, sampleID, url, outcome_dir, design_num, driver_list, driver_str)
 
-
+    # 写入订单表
+    write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, skip_review, send_email=send_email)

@@ -100,3 +100,12 @@ DB_CONFIG:
     passwd: root
     db: test_db
     table: table
+
+# Detection Time (Minutes)
+check_interval_minutes: 30
+
+# Mail Interval Date (Days)
+email_interval_days: 3
+
+# Maximum interval date (days)
+max_interval_days: 15
