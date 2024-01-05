@@ -22,6 +22,8 @@ import yaml
 import datetime
 import openpyxl
 from urllib.parse import urlparse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -32,6 +34,10 @@ logger = logging.getLogger(__name__)
 # 读取配置文件
 with open('config.yaml', 'r', encoding='utf-8') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
+
+db_config = config['DB_CONFIG']
+db_url = f"mysql+pymysql://{db_config['user']}:{db_config['passwd']}@{db_config['host']}:{db_config['port']}/{db_config['db']}"
+db_handler = primkit.DatabaseHandler(db_url)
 
 # 设置命令行参数
 parser = argparse.ArgumentParser(description='Your script description')
@@ -556,7 +562,8 @@ def design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix='
     file_reader = primkit.FileReader()
     df_res = file_reader.read_csv(save_path)
 
-    # Add a column to distinguish file_suffix results
+    # Add a column to distinguish file_suffix results and sampleID
+    df_res.insert(0, 'sampleID', len(df_res) * [sampleID])
     df_res['Suffix'] = file_suffix
 
     logger.info(f'第 {file_suffix} 次引物设计结果为:\n{df_res}')
@@ -571,17 +578,10 @@ def save_to_database(df_res, table_name=None):
     :param df_res: DataFrame to be saved in the database.
     :param table_name: Optional. The name of the table where the DataFrame will be saved. If not provided, will use default from config.
     """
-
-    global config  # Assuming config is a global variable
-
-    db_config = config['DB_CONFIG']
-    db_url = f"mysql+pymysql://{db_config['user']}:{db_config['passwd']}@{db_config['host']}:{db_config['port']}/{db_config['db']}"
-
     # Use the provided table_name or default to the one in config
     if table_name is None:
         table_name = db_config.get('table', 'default_table')
 
-    db_handler = primkit.DatabaseHandler(db_url)
     db_handler.create_df_table(table_name, df_res)
     db_handler.insert_df(table_name, df_res)
 
@@ -762,6 +762,10 @@ def process_primer_results(df_res, df_design, sampleID, skip_snp_design, send_em
     elif 'pos' in df_design.columns and 'Start_Position' not in df_design.columns:
         df_design['pos'] = df_design['pos'] + 1
 
+    # Prevent the hotspot design from having a gap of 3 columns with no hotspot design, which may cause problems when inserting into the database
+    for column in ['hots', 'Start_Position', 'End_Position']:
+        if column not in df_design.columns:
+            df_design[column] = None
     save_to_database(df_design, table_name='mrd_selection')
 
     df_sample = pd.merge(df_res, df_design, on='TemplateID').drop_duplicates('TemplateID', keep='first')
@@ -847,8 +851,10 @@ def process_primer_order(df, mold):
     df_combined['DualLabelModification'] = '1'
     df_combined['Remarks'] = '1管TE溶解为50uM浓度'
     df_combined['OrderingCompany'] = mold
+    df_combined['DesignDate'] = pd.to_datetime(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     df_combined.sort_values('PrimerName', inplace=True)
     df_combined.reset_index(drop=True, inplace=True)
+
     # Save to database
     save_to_database(df_combined, table_name='primer_order')
 
@@ -1132,11 +1138,77 @@ def get_wes_check_status(sampleSn):
         sys.exit(1)
 
 
-def write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, skip_review, send_email=True):
+def upsert_to_database(df, table_name, unique_col, update_cols):
+    """
+    Update specific fields in the database based on the unique_col or insert a new record.
+
+    :param df: DataFrame containing the data to update or insert.
+    :param table_name: The name of the table to upsert into.
+    :param unique_col: The name of the column to match for the update.
+    :param update_cols: List of column names that need to be updated.
+    """
+    engine = db_handler.get_engine()
+    inspector = db_handler.get_inspector()
+
+    # Check if the table exists
+    if not inspector.has_table(table_name):
+        save_to_database(df, table_name=table_name)
+        return
+
+    # Start a transaction
+    with engine.begin() as conn:
+        for index, row in df.iterrows():
+            try:
+                # Check if a record with the unique column value exists
+                exists_stmt = text(f"""SELECT EXISTS (
+                    SELECT 1 FROM {table_name} WHERE {unique_col} = :value
+                )""")
+                exists_result = conn.execute(exists_stmt, {'value': row[unique_col]}).scalar()
+
+                if exists_result:
+                    # Record exists, construct an update statement
+                    update_values = {col: row[col] for col in update_cols}
+                    update_values['unique_value'] = row[unique_col]
+                    update_stmt = text(f"""
+                            UPDATE {table_name} SET 
+                            {', '.join([f"{col} = :{col}" for col in update_cols])} 
+                            WHERE {unique_col} = :unique_value
+                        """)
+                    conn.execute(update_stmt, update_values)
+                    logger.info(f"Updated record with {unique_col} = {row[unique_col]} in '{table_name}' table.")
+                else:
+                    # Record does not exist, insert the new record
+                    save_to_database(df.iloc[[index]], table_name=table_name)
+                    logger.info(
+                        f"Inserted new record with {unique_col} = {row[unique_col]} into '{table_name}' table.")
+            except SQLAlchemyError as e:
+                logger.error(f"An error occurred: {e}")
+
+
+def write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, send_email=True):
+    """
+    Processes primer design results, prepares the primer order, writes the order file, and updates the database.
+
+    :param sampleID: The unique identifier of the sample.
+    :param df_design: DataFrame containing the design information.
+    :param df_res: DataFrame containing the primer design results.
+    :param order_dir: Directory where the order file will be saved.
+    :param mold: String representing the mold (e.g., 'sh', 'hz', 'sg', 'dg') for different order templates.
+    :param skip_snp_design: Boolean flag indicating whether to skip SNP design.
+    :param send_email: Boolean flag indicating whether to send an email for quality control. Default is True.
+
+    :return: The path to the written order file.
+
+    This function takes the results of primer design, processes them for quality control, and prepares the order
+    file based on the specified mold. It then logs the order information in a database for tracking.
+    """
+    # Check the primer results
     df_sample = process_primer_results(df_res, df_design, sampleID, skip_snp_design, send_email=send_email)
 
+    # Add order information and merge primers
     df_processed = process_primer_sample(df_sample)
 
+    # Added order format information
     df_order = process_primer_order(df_processed, mold)
 
     # The mold value is mapped to the corresponding function
@@ -1164,11 +1236,16 @@ def write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, s
         "OrderDate": [datetime.date.today()],  # 订购时间
         "OrderCompany": [mold]  # 订购公司
     }, index=[0])
-    save_to_database(df_order_info, 'monitor_order')
+
+    # Write or update order history
+    upsert_to_database(df_order_info, 'monitor_order', 'SampleID', ['OrderFile', 'DesignDate'])
+
+    return primer_result
 
 
 def execute():
     file_path = 'working/NGS231206-124WX.mrd_selected.xlsx'
+    mold = 'sg'
     send_email = False
     email_interval = 10
     exit_threshold = 30
@@ -1211,4 +1288,6 @@ def execute():
     df_res = perform_primer_design(df_no_driver, sampleID, url, outcome_dir, design_num, driver_list, driver_str)
 
     # 写入订单表
-    write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, skip_review, send_email=send_email)
+    primer_result = write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, send_email=send_email)
+
+
