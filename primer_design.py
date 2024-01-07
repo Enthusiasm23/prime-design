@@ -22,7 +22,7 @@ import yaml
 import datetime
 import openpyxl
 from urllib.parse import urlparse
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.exc import SQLAlchemyError
 import warnings
 
@@ -257,6 +257,49 @@ def get_project_type(sampleSn):
     return "MRD" if '迈锐达' in itemName or 'MRD' in itemName else "OTHER"
 
 
+def get_cms_api_token():
+    headers = config['header']
+    postUrl = config['CMS_URL']['apiToken']['post_url']
+    postData = config['CMS_URL']['apiToken']['post_data']
+    try:
+        response = requests.post(postUrl, data=postData, headers=headers)
+        if response.status_code == 200:
+            text = response.text
+            try:
+                token = json.loads(text)["result"]["token"]
+            except KeyError:
+                token = json.loads(text)["data"]["token"]
+            logging.info(f'Token obtained successfully, Token: {token}')
+            return token
+        else:
+            logging.error('ERROR: response.status_code is not equal to 200.')
+            sys.exit(1)
+    except Exception as e:
+        logging.error(f'ERROR: Error getting sample audit status of cms system. The specific reason is {e}')
+        sys.exit(1)
+
+
+def get_wes_check_status_old(sampleSn):
+    token = get_cms_api_token()
+    session = requests.session()
+    header = {'User-Agent': config['header']['User-Agent'], "Access-Token": token}
+    postUrl = config['CMS_URL']['check_audit']['post_url']
+    postData = {'sample_no': sampleSn}
+    try:
+        response = session.post(postUrl, params=postData, headers=header)
+        if response.status_code == 200:
+            result = json.loads(response.text)
+            wes_check_status = result["data"]["sample"]["auth_status"]
+            logging.info(f'获取样本{sampleSn}审核状态为: {wes_check_status}.')
+            return wes_check_status
+        else:
+            logging.error("ERROR: 获取样本 {} 审核状态失败, 响应代码为 {}.".format(sampleSn, response.status_code))
+            sys.exit(1)
+    except Exception as e:
+        logging.error("ERROR: 获取样本 {} 审核状态失败, 错误为: {}.".format(sampleSn, e))
+        sys.exit(1)
+
+
 def handle_mrd_sample(sampleID, send_email=True):
     """
     Handles the MRD sample ID by determining its project type and sending email notifications if necessary.
@@ -348,7 +391,7 @@ def validate_cancer_type(df_snp, hots_cancer_ids, cancer_id=None):
         if not loci_cancer_id or loci_cancer_id[0] == 'unknown':
             sampleSn = df_snp["sampleSn"].iloc[0] if "sampleSn" in df_snp.columns else "UnknownSample"
             subject = f'样本 cancer_type_ID 检查警告 - {sampleSn}'
-            message = f'警告：样本ID {sample_id} 检查 cancer_type_ID 为 unknown。\n提示：样本 cancer_type_ID 为空（unknown），无法为其样本增加热点引物 。\n请检查相关数据以确保样本的准确性。'
+            message = f'警告：样本ID {sampleSn} 检查 cancer_type_ID 为 unknown。\n提示：样本 cancer_type_ID 为空（unknown），无法为其样本增加热点引物 。\n请检查相关数据以确保样本的准确性。'
             emit(subject, message)
     elif cancer_id:
         loci_cancer_id = [cancer_id]
@@ -864,10 +907,7 @@ def process_primer_order(df, mold):
 def write_sh_order(df_sample, dataframe, order_path, sampleID):
     os.makedirs(order_path, exist_ok=True)
     try:
-        if not run:
-            order_template = config['order_template']['sh']
-        else:
-            order_template = config['local_order_template']['sh']
+        order_template = config['order_template']['sh']
         wb = openpyxl.load_workbook(order_template)
     except Exception as e:
         logging.error(f'ERROR: {e}')
@@ -933,10 +973,7 @@ def write_sh_order(df_sample, dataframe, order_path, sampleID):
 def write_hz_order(df_sample, dataframe, order_path, sampleID):
     os.makedirs(order_path, exist_ok=True)
     try:
-        if not run:
-            order_template = config['order_template']['hz']
-        else:
-            order_template = config['local_order_template']['hz']
+        order_template = config['order_template']['hz']
         wb = openpyxl.load_workbook(order_template)
     except Exception as e:
         logging.error(f'ERROR: {e}')
@@ -999,10 +1036,7 @@ def write_hz_order(df_sample, dataframe, order_path, sampleID):
 def write_dg_order(df_sample, dataframe, order_path, sampleID):
     os.makedirs(order_path, exist_ok=True)
     try:
-        if not run:
-            order_template = config['order_template']['dg']
-        else:
-            order_template = config['local_order_template']['dg']
+        order_template = config['order_template']['dg']
         wb = openpyxl.load_workbook(order_template)
     except Exception as e:
         logging.error(f'ERROR: {e}')
@@ -1243,8 +1277,136 @@ def write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, s
     return primer_result
 
 
+def check_email_sent(sample_id, table_name):
+    """
+    Checks the email sent status for a given sample ID.
+
+    :param sample_id: The sample ID to check in the database.
+    :param table_name: The name of the table in the database.
+    :return: An integer indicating the status of the email sent.
+             Returns 0 if an email has not been sent, 1 if sent, 2 if not required,
+             and None if no record is found or for any other unexpected value.
+    """
+    engine = db_handler.get_engine()
+
+    # Construct the SQL query using text()
+    query = text(f"""
+        SELECT EmailSent FROM {table_name}
+        WHERE SampleID = :sample_id
+    """)
+
+    # Execute the query and fetch the result
+    with engine.connect() as connection:
+        result = connection.execute(query, {'sample_id': sample_id}).fetchone()
+
+        # Check if the sample ID was found and return the appropriate value
+        if result:
+            # If result is a tuple, the EmailSent column is assumed to be at index 0
+            email_sent_status = result[0]
+            if email_sent_status in [0, 1, 2]:
+                return email_sent_status
+            else:
+                return None  # This covers empty or any other unexpected value
+        else:
+            # If no result is found for the sample ID, also return None
+            return None
+
+
+def update_email_status(sample_id, table_name, order_date):
+    """
+    Updates the database to mark that an email has been sent for a given sample ID.
+
+    :param sample_id: The sample ID in the database.
+    :param table_name: The name of the table in the database.
+    :param order_date: The date when the order was sent.
+    """
+    engine = db_handler.get_engine()
+
+    # Prepare the SQL statement to update the EmailSent and OrderDate
+    update_stmt = text(f"""
+        UPDATE {table_name}
+        SET EmailSent = :email_sent, OrderDate = :order_date
+        WHERE SampleID = :sample_id
+    """)
+
+    # Prepare a reference dictionary
+    params = {
+        "email_sent": 1,
+        "order_date": order_date,
+        "sample_id": sample_id
+    }
+
+    # Execute the update
+    with engine.begin() as conn:
+        conn.execute(update_stmt, params)
+        logger.info(f"EmailSent updated to 1 and OrderDate set to {order_date} for SampleID: {sample_id}")
+
+
+def get_audit_status(sample_sn):
+    """
+    Retrieves the audit status for a given sample number.
+
+    :param sample_sn: The sample number to check the status for.
+    :return: A tuple containing the audit status code and its description.
+    """
+    sample_local = determine_sample_location(sample_sn)
+    status_dict = {
+        'YWC': '已完成', 'DSY': '待收样', 'JCZZ': '检测终止', 'BYZ': '补样中',
+        'YSH': '已审核', 'WTG': '审核未通过', 'DSH': '待审核', 'BHG': '不合格',
+        'FJZ': '复检中', 'ZTJC': '暂停检测', 'JCZ': '检测中', 'YSY': '已收样',
+        'YSC': '已送出', 'DTJ': '待提交', 'TYZ': '退样中', 'YTY': '已退样',
+        'YZF': '已作废', 'YCY': '已采样'
+    }
+
+    if sample_local == 'OLD':
+        audit_status = get_wes_check_status_old(sample_sn)
+        status = 'YWC' if audit_status else 'DSH'
+    elif sample_local == 'NEW':
+        audit_status = get_wes_check_status(sample_sn)
+        status = status_dict.get(audit_status, 'Unknown Status')
+    else:
+        logging.error(
+            f'ERROR: The sample {sample_sn} does not exist in the small wide CMS system, nor does it exist in the thousand wing CMS system')
+        sys.exit(1)
+
+    return audit_status, status
+
+
+def check_order(sampleID, primer_result, skip_review):
+    order_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    toaddrs = config['emails']['setup']['log_toaddrs'] if DEBUG else config['emails']['setup']['order_toaddrs']
+    cc = config['emails']['setup']['log_cc'] if DEBUG else config['emails']['setup']['cc']
+    test_subject = f'{sampleID} 引物合成订购 ( 预先订购 | 位点追加 | 项目测试 | 科研项目)'
+    pro_subject = f'{sampleID} 引物合成订购'
+    test_message = f'样本ID：{sampleID}\n注：该引物合成用于(预先订购 | 位点追加 | 项目测试 | 科研项目)其中之一。\n引物结果：{os.path.basename(primer_result)}（见附件）'
+    pro_message = f'样本ID：{sampleID}\n\nCMS审核结果：已通过\n\n引物结果：{os.path.basename(primer_result)}（见附件）'
+    subject = test_subject if skip_review else pro_subject
+    message = test_message if skip_review else pro_message
+
+    email_status = check_email_sent(sampleID, 'monitor_order')
+
+    if email_status == 0:
+        # 如果EmailSent是0，发送邮件并更新数据库
+        if skip_review:
+            emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
+            update_email_status(sampleID, 'monitor_order', order_date)
+        else:
+            sample_local = determine_sample_location(sampleID)
+            # TODO：增加循环判断，邮箱日期监控
+    elif email_status == 1:
+        # 如果EmailSent是1，不发送邮件
+        logger.info(f"Email has already been sent for SampleID: {sampleID}")
+    elif email_status == 2:
+        # 如果EmailSent是2，不需要发送邮件
+        logger.info(f"Email does not need to be sent for SampleID: {sampleID}")
+    else:
+        # 如果EmailSent是None或其他值，发送错误消息并退出程序
+        logger.error(f"Unexpected value for EmailSent or no record found for SampleID: {sampleID}")
+        sys.exit(1)
+
+
 def execute():
-    file_path = 'working/NGS231206-124WX.mrd_selected.xlsx'
+    file_path = 'working/NGS231223-150WX.mrd_selected.tsv'
     mold = 'sg'
     send_email = False
     email_interval = 10
@@ -1290,4 +1452,4 @@ def execute():
     # 写入订单表
     primer_result = write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, send_email=send_email)
 
-
+    # 检查订单状态
