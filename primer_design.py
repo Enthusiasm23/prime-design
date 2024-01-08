@@ -13,7 +13,6 @@ import json
 import time
 import pandas as pd
 import numpy as np
-import primkit
 import primkit as pt
 import requests
 import logging
@@ -34,29 +33,6 @@ logger = logging.getLogger(__name__)
 # 读取配置文件
 with open('config.yaml', 'r', encoding='utf-8') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
-
-db_config = config['DB_CONFIG']
-db_url = f"mysql+pymysql://{db_config['user']}:{db_config['passwd']}@{db_config['host']}:{db_config['port']}/{db_config['db']}"
-db_handler = primkit.DatabaseHandler(db_url)
-
-# 设置命令行参数
-parser = argparse.ArgumentParser(description='Your script description')
-parser.add_argument('--debug', dest='debug', action='store_true',
-                    help='Run in debug mode (overrides configuration file setting)')
-
-# 解析命令行参数
-args = parser.parse_args()
-
-# 确定 DEBUG 模式：如果命令行参数指定了 --debug，则使用该参数，否则使用配置文件中的设置
-DEBUG = args.debug if args.debug else config.get('DEBUG', False)
-
-# 使用 DEBUG 变量
-if DEBUG:
-    # 运行调试模式下的代码
-    logger.info("Running in debug mode...")
-else:
-    # 运行非调试模式下的代码
-    logger.info("Running in normal mode...")
 
 
 def emit(subject, message, attachments=None, to_addrs=None, cc_addrs=None, bcc_addrs=None):
@@ -146,7 +122,7 @@ def check_sample_date(sample_id, send_email=True, email_interval=10, exit_thresh
         logger.error("Unable to extract the date from the sample ID.")
 
 
-def determine_sample_location(sampleSn):
+def check_sample_system(sampleSn):
     """
     sampleSn: sample ID
     return: NEW: 千翼CMS系统, OLD: 小阔CMS系统, NONE: CMS不存在
@@ -206,118 +182,191 @@ def get_cms_accessToken():
         sys.exit(1)
 
 
-def get_project_itemName_old(sampleSn):
-    accessToken = get_cms_accessToken()
-    sampleInfo_url = config['CMS_URL']['sampleInfo']['get_url']
-    payload = {'accessToken': accessToken, "search[sampleSn][value]": sampleSn, "search[sampleSn][query]": "eq"}
-    try:
-        result = requests.get(sampleInfo_url, params=payload)
-        dicts = json.loads(result.text)
-        if len(dicts["data"]) > 0:
-            project_id = dicts["data"][0]["itemName"]
-            logger.info(f'Successfully obtained project ID, project ID: {project_id}')
-            return project_id
+def get_project_name(sampleSn, sample_local):
+    """
+    Retrieves the project name for a given sample ID based on its location.
+
+    :param sampleSn: The sample ID to check.
+    :param sample_local: The location identifier of the sample ('OLD' or 'NEW').
+    :return: The project name associated with the sample ID.
+    """
+
+    if sample_local == 'NEW':
+        # Code for the new system
+        post_data = json.dumps({"fybh": sampleSn})
+        post_url = config['API_CMS']['new_cms']['detail_url']
+        header = config['API_CMS']['new_cms']['new_header']
+        response = requests.post(post_url, data=post_data, headers=header, timeout=30)
+
+        if response.status_code == 200:
+            sample_info = json.loads(response.text)
+            if sample_info['errorCode'] == '0':
+                return sample_info['data']['DD'][0]['XMMC']
+            else:
+                logger.error('ERROR: errorCode is {}. errorMsg is {}.'
+                             .format(sample_info['errorCode'], sample_info['msg']))
+                sys.exit(1)
         else:
-            logger.warning('ERROR: Sample ID does not exist in cms system!')
-            return 'OTHER'
-    except Exception as e:
-        logger.error(
-            f'ERROR: An error occurred while getting the item ID of the sample for the cms system. The specific reason is {e}')
-        sys.exit(1)
-
-
-def get_project_type_old(sampleSn):
-    project_id = get_project_itemName_old(sampleSn)
-    project_id = re.search(r"^(.{7})", project_id).group(1)
-    MRD_detection = config['MRD_ID']
-    return "MRD" if project_id in MRD_detection else "OTHER"
-
-
-def get_project_itemName(sampleSn):
-    payload = {"fybh": sampleSn}
-    post_data = json.dumps(payload)
-    post_url = config['API_CMS']['new_cms']['detail_url']
-    header = config['API_CMS']['new_cms']['new_header']
-    response = requests.post(post_url, data=post_data, headers=header, timeout=30)
-    if response.status_code == 200:
-        sample_info = json.loads(response.text)
-        if sample_info['errorCode'] == '0':
-            return sample_info['data']['DD'][0]['XMMC']
-        else:
-            logger.error(
-                'ERROR: errorCode is {}. errorMsg is {}.'.format(sample_info['errorCode'], sample_info['msg']))
+            logger.error('ERROR: response.status_code is not equal to 200.')
             sys.exit(1)
+
+    elif sample_local == 'OLD':
+        # Code for the old system
+        accessToken = get_cms_accessToken()
+        sampleInfo_url = config['CMS_URL']['sampleInfo']['get_url']
+        payload = {'accessToken': accessToken, "search[sampleSn][value]": sampleSn, "search[sampleSn][query]": "eq"}
+
+        try:
+            result = requests.get(sampleInfo_url, params=payload)
+            dicts = json.loads(result.text)
+            if len(dicts["data"]) > 0:
+                project_id = dicts["data"][0]["itemName"]
+                logger.info(f'Successfully obtained project ID, project ID: {project_id}')
+                return project_id
+            else:
+                logger.error('ERROR: Sample ID does not exist in cms system!')
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f'ERROR: An error occurred while getting the project name for the sample. Reason: {e}')
+            sys.exit(1)
+
     else:
-        logger.error('ERROR: response.status_code is not equal to 200.')
+        logger.error(f'ERROR: Unknown location for sample {sampleSn}.')
         sys.exit(1)
 
 
-def get_project_type(sampleSn):
-    itemName = get_project_itemName(sampleSn)
-    return "MRD" if '迈锐达' in itemName or 'MRD' in itemName else "OTHER"
+def get_project_type(project_name, sample_local):
+    """
+    Determines the project type based on the project name and sample location.
+
+    :param project_name: The name of the project.
+    :param sample_local: The location identifier of the sample ('OLD' or 'NEW').
+    :return: The project type ('MRD' or 'OTHER').
+    """
+    if sample_local == 'NEW':
+        return "MRD" if '迈锐达' in project_name or 'MRD' in project_name else "OTHER"
+    elif sample_local == 'OLD':
+        project_id = re.search(r"^(.{7})", project_name).group(1)
+        MRD_detection = config['MRD_ID']
+        return "MRD" if project_id in MRD_detection else "OTHER"
+    else:
+        logger.error(f'ERROR: Unknown location for the project {project_name}.')
+        sys.exit(1)
 
 
-def get_cms_api_token():
-    headers = config['header']
-    postUrl = config['CMS_URL']['apiToken']['post_url']
-    postData = config['CMS_URL']['apiToken']['post_data']
-    try:
-        response = requests.post(postUrl, data=postData, headers=headers)
+def get_sample_status(sampleSn, sample_local):
+    """
+    Retrieves the status of a sample based on the specified system type.
+
+    :param sampleSn: The sample number to check the status for.
+    :param sample_local: The system type, 'OLD' or 'NEW', to determine the API to use.
+    :return: The status of the sample.
+    """
+    if sample_local == 'NEW':
+        payload = {"fybh": sampleSn}
+        post_data = json.dumps(payload)
+        post_url = config['API_CMS']['new_cms']['detail_url']
+        header = config['API_CMS']['new_cms']['new_header']
+        response = requests.post(post_url, data=post_data, headers=header, timeout=30)
         if response.status_code == 200:
-            text = response.text
-            try:
-                token = json.loads(text)["result"]["token"]
-            except KeyError:
-                token = json.loads(text)["data"]["token"]
-            logging.info(f'Token obtained successfully, Token: {token}')
-            return token
+            sample_info = json.loads(response.text)
+            if sample_info['errorCode'] == '0':
+                sample_status = sample_info['data']['YBFY']['YBZT']
+                return sample_status
+            else:
+                logger.error(
+                    'ERROR: errorCode is {}. errorMsg is {}.'.format(sample_info['errorCode'], sample_info['msg']))
+                sys.exit(1)
         else:
-            logging.error('ERROR: response.status_code is not equal to 200.')
+            logger.error('ERROR: response.status_code is not equal to 200.')
             sys.exit(1)
-    except Exception as e:
-        logging.error(f'ERROR: Error getting sample audit status of cms system. The specific reason is {e}')
+
+    elif sample_local == 'OLD':
+        access_token = get_cms_accessToken()
+        sample_info_url = config['CMS_URL']['sampleInfo']['get_url']
+        payload = {'accessToken': access_token, "search[sampleSn][value]": sampleSn, "search[sampleSn][query]": "eq"}
+        try:
+            result = requests.get(sample_info_url, params=payload)
+            dicts = json.loads(result.text)
+            if len(dicts["data"]) > 0:
+                sample_status = dicts["data"][0]["sampleStatusShow"]
+                logging.info(f'Successfully obtained sampleStatus, sampleStatus: {sample_status}')
+                return sample_status
+            else:
+                logger.error('ERROR: Sample ID does not exist in cms system!')
+                sys.exit(1)
+        except Exception as e:
+            logger.error(
+                f'ERROR: An error occurred while getting the item ID of the sample for the cms system. The specific reason is {e}')
+            sys.exit(1)
+
+    else:
+        logger.error(f'ERROR: Unknown system type {sample_local}')
         sys.exit(1)
 
 
-def get_wes_check_status_old(sampleSn):
-    token = get_cms_api_token()
-    session = requests.session()
-    header = {'User-Agent': config['header']['User-Agent'], "Access-Token": token}
-    postUrl = config['CMS_URL']['check_audit']['post_url']
-    postData = {'sample_no': sampleSn}
-    try:
-        response = session.post(postUrl, params=postData, headers=header)
-        if response.status_code == 200:
-            result = json.loads(response.text)
-            wes_check_status = result["data"]["sample"]["auth_status"]
-            logging.info(f'获取样本{sampleSn}审核状态为: {wes_check_status}.')
-            return wes_check_status
-        else:
-            logging.error("ERROR: 获取样本 {} 审核状态失败, 响应代码为 {}.".format(sampleSn, response.status_code))
-            sys.exit(1)
-    except Exception as e:
-        logging.error("ERROR: 获取样本 {} 审核状态失败, 错误为: {}.".format(sampleSn, e))
+def get_audit_status(sample_sn, sample_local):
+    """
+    Retrieves the audit status for a given sample number.
+
+    :param sample_sn: The sample number to check the status for.
+    :param sample_local: MRD sample ID system.
+    :return: A tuple containing the audit status code and its description.
+    """
+    status_dict = {
+        'YCY': '已采样',
+        'YSC': '已送出',
+        'YSY': '已收样',
+        'JCZ': '检测中',
+        'FJZ': '复检中',
+        'YWC': '已完成',
+        'JCZZ': '检测终止',
+        'BHG': '不合格',
+        'BGDSH': '报告待审核',  # 小阔接口
+        'BGWTG': '报告审核未通过',  # 小阔接口
+        'BGYSH': '报告已审核',  # 小阔接口
+        'BYZ': '补样中',
+        'ZTJC': '暂停检测',
+        'DSY': '待收样',  # 千翼接口
+        'YSH': '已审核',  # 千翼接口
+        'WTG': '审核未通过',  # 千翼接口
+        'DSH': '待审核',  # 千翼接口
+        'DTJ': '待提交',  # 千翼接口
+        'TYZ': '退样中',  # 千翼接口
+        'YTY': '已退样',  # 千翼接口
+        'YZF': '已作废',  # 千翼接口
+    }
+
+    audit_status = get_sample_status(sample_sn, sample_local)
+
+    # Determine the status description
+    if sample_local == 'OLD':
+        # For the OLD system, find the abbreviation from the status description
+        status_abbr = next((abbr for abbr, desc in status_dict.items() if desc == audit_status), 'Unknown')
+        status_desc = audit_status
+    elif sample_local == 'NEW':
+        # For the NEW system, use the status abbreviation directly
+        status_abbr = audit_status
+        status_desc = status_dict.get(audit_status, 'Unknown Status')
+    else:
+        logging.error(f'ERROR: Unknown system for sample {sample_sn}.')
         sys.exit(1)
 
+    return status_abbr, status_desc
 
-def handle_mrd_sample(sampleID, send_email=True):
+
+def handle_mrd_sample(sampleID, sample_local, send_email=True):
     """
     Handles the MRD sample ID by determining its project type and sending email notifications if necessary.
 
     :param sampleID: The MRD sample ID to be processed.
+    :param sample_local: MRD sample ID system
     :param send_email: Flag indicating whether to send an email.
     """
-    sample_local = determine_sample_location(sampleID)
-    if sample_local == 'OLD':
-        project_item = get_project_type_old(sampleID)
-    elif sample_local == 'NEW':
-        project_item = get_project_type(sampleID)
-    else:
-        logger.error(
-            f'ERROR: The sample {sampleID} does not exist in the small wide CMS system, nor does it exist in the thousand wing CMS system')
-        sys.exit(1)
+    project_name = get_project_name(sampleID, sample_local)
+    project_type = get_project_type(project_name, sample_local)
 
-    if project_item == 'OTHER':
+    if project_type == 'OTHER':
         logger.error(f'The sample ID {sampleID} does not belong to the MRD detection, and no primer design is required')
         if send_email:
             subject = f"样本项目检查警告 - {sampleID}"
@@ -593,16 +642,16 @@ def design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix='
         os.makedirs(sample_dir)
 
     # Select sites and prepare data for posting
-    headers, cookies, token = primkit.fetch_web_data(url=url, method='requests')
-    post_data = primkit.prepare_post_data(token, result_string)
+    headers, cookies, token = pt.fetch_web_data(url=url, method='requests')
+    post_data = pt.prepare_post_data(token, result_string)
 
     # Design primers and download the results
-    down_url = primkit.design_primers(post_data, method='requests', headers=headers, cookies=cookies)
+    down_url = pt.design_primers(post_data, method='requests', headers=headers, cookies=cookies)
     save_path = os.path.join(sample_dir, f'{sampleID}-{file_suffix}.csv')
-    primkit.download(down_url, save_path)
+    pt.download(down_url, save_path)
 
     # Read and log the result
-    file_reader = primkit.FileReader()
+    file_reader = pt.FileReader()
     df_res = file_reader.read_csv(save_path)
 
     # Add a column to distinguish file_suffix results and sampleID
@@ -1132,46 +1181,6 @@ def write_sg_order(df_order, df_combined, order_dir, sampleID):
     return save_file
 
 
-def get_sample_status_old(sampleSn):
-    accessToken = get_cms_accessToken()
-    sampleInfo_url = config['CMS_URL']['sampleInfo']['get_url']
-    payload = {'accessToken': accessToken, "search[sampleSn][value]": sampleSn, "search[sampleSn][query]": "eq"}
-    try:
-        result = requests.get(sampleInfo_url, params=payload)
-        dicts = json.loads(result.text)
-        if len(dicts["data"]) > 0:
-            sampleStatus = dicts["data"][0]["sampleStatusShow"]
-            logging.info(f'Successfully obtained sampleStatus, sampleStatus: {sampleStatus}')
-            return sampleStatus
-        else:
-            logging.warning('ERROR: Sample ID does not exist in cms system!')
-            return 'OTHER'
-    except Exception as e:
-        logging.error(
-            f'ERROR: An error occurred while getting the item ID of the sample for the cms system. The specific reason is {e}')
-        sys.exit(1)
-
-
-def get_wes_check_status(sampleSn):
-    payload = {"fybh": sampleSn}
-    post_data = json.dumps(payload)
-    post_url = config['API_CMS']['new_cms']['detail_url']
-    header = config['API_CMS']['new_cms']['new_header']
-    response = requests.post(post_url, data=post_data, headers=header, timeout=30)
-    if response.status_code == 200:
-        sampleSn_info = json.loads(response.text)
-        if sampleSn_info['errorCode'] == '0':
-            sample_status = sampleSn_info['data']['YBFY']['YBZT']
-            return sample_status
-        else:
-            logging.error(
-                'ERROR: errorCode is {}. errorMsg is {}.'.format(sampleSn_info['errorCode'], sampleSn_info['msg']))
-            sys.exit(1)
-    else:
-        logging.error('ERROR: response.status_code is not equal to 200.')
-        sys.exit(1)
-
-
 def upsert_to_database(df, table_name, unique_col, update_cols):
     """
     Update specific fields in the database based on the unique_col or insert a new record.
@@ -1312,74 +1321,80 @@ def check_email_sent(sample_id, table_name):
             return None
 
 
-def update_email_status(sample_id, table_name, order_date):
+def update_email_status(sample_id, table_name, order_date, review_status=None, email_sent=1):
     """
-    Updates the database to mark that an email has been sent for a given sample ID.
+    Updates the database to mark the email sent status for a given sample ID, and optionally update the review status.
 
     :param sample_id: The sample ID in the database.
     :param table_name: The name of the table in the database.
     :param order_date: The date when the order was sent.
+    :param review_status: Optional. The new review status for the sample.
+    :param email_sent: The status to set for EmailSent. Default is 1.
     """
     engine = db_handler.get_engine()
 
-    # Prepare the SQL statement to update the EmailSent and OrderDate
+    # Prepare the SQL statement to update the EmailSent, OrderDate, and optionally ReviewStatus
+    update_values = "EmailSent = :email_sent, OrderDate = :order_date"
+    if review_status is not None:
+        update_values += ", ReviewStatus = :review_status"
+
     update_stmt = text(f"""
         UPDATE {table_name}
-        SET EmailSent = :email_sent, OrderDate = :order_date
+        SET {update_values}
         WHERE SampleID = :sample_id
     """)
 
     # Prepare a reference dictionary
     params = {
-        "email_sent": 1,
+        "email_sent": email_sent,
         "order_date": order_date,
         "sample_id": sample_id
     }
 
+    if review_status is not None:
+        params["review_status"] = review_status
+
     # Execute the update
     with engine.begin() as conn:
         conn.execute(update_stmt, params)
-        logger.info(f"EmailSent updated to 1 and OrderDate set to {order_date} for SampleID: {sample_id}")
+        update_msg = f"EmailSent updated to {email_sent} and OrderDate set to {order_date}"
+        if review_status:
+            update_msg += f", with ReviewStatus updated to {review_status}"
+        update_msg += f" for SampleID: {sample_id}"
+        logger.info(update_msg)
 
 
-def get_audit_status(sample_sn):
+def generate_testing_periods(cycle, max_cycle):
+    periods = [cycle]
+    for i in range(cycle * 2, max_cycle + 1, cycle):
+        periods.append(i)
+    if periods[-1] != max_cycle:
+        periods.append(max_cycle)
+    return periods
+
+
+def check_order(sampleID, primer_result, skip_review, sample_local, send_email=True):
     """
-    Retrieves the audit status for a given sample number.
+    Monitors and manages the process of checking sample audit status, sending emails, and updating database.
 
-    :param sample_sn: The sample number to check the status for.
-    :return: A tuple containing the audit status code and its description.
+    :param sampleID: The unique identifier for the sample.
+    :param primer_result: The file path of the primer result that will be attached to the email.
+    :param skip_review: A flag to determine whether to skip the review process. If True, the email is sent immediately.
+    :param sample_local: Indicates the system where the sample is located ('OLD' or 'NEW').
+    :param send_email: Boolean flag indicating whether to send an email for quality control. Default is True.
+
+    The function implements a while loop that continuously checks the audit status of the sample.
+    If the sample passes the audit, an email is sent, and the database is updated.
+    If the sample is still under review, the function waits for a predefined interval before rechecking.
+    If the sample fails the audit or experiences an anomaly, an alert email is sent, and the function exits.
     """
-    sample_local = determine_sample_location(sample_sn)
-    status_dict = {
-        'YWC': '已完成', 'DSY': '待收样', 'JCZZ': '检测终止', 'BYZ': '补样中',
-        'YSH': '已审核', 'WTG': '审核未通过', 'DSH': '待审核', 'BHG': '不合格',
-        'FJZ': '复检中', 'ZTJC': '暂停检测', 'JCZ': '检测中', 'YSY': '已收样',
-        'YSC': '已送出', 'DTJ': '待提交', 'TYZ': '退样中', 'YTY': '已退样',
-        'YZF': '已作废', 'YCY': '已采样'
-    }
-
-    if sample_local == 'OLD':
-        audit_status = get_wes_check_status_old(sample_sn)
-        status = 'YWC' if audit_status else 'DSH'
-    elif sample_local == 'NEW':
-        audit_status = get_wes_check_status(sample_sn)
-        status = status_dict.get(audit_status, 'Unknown Status')
-    else:
-        logging.error(
-            f'ERROR: The sample {sample_sn} does not exist in the small wide CMS system, nor does it exist in the thousand wing CMS system')
-        sys.exit(1)
-
-    return audit_status, status
-
-
-def check_order(sampleID, primer_result, skip_review):
     order_date = datetime.datetime.now().strftime('%Y-%m-%d')
     toaddrs = config['emails']['setup']['log_toaddrs'] if DEBUG else config['emails']['setup']['order_toaddrs']
     cc = config['emails']['setup']['log_cc'] if DEBUG else config['emails']['setup']['cc']
-    test_subject = f'{sampleID} 引物合成订购 ( 预先订购 | 位点追加 | 项目测试 | 科研项目)'
-    pro_subject = f'{sampleID} 引物合成订购'
+    test_subject = f'样本引物合成订购 ( 预先订购 | 位点追加 | 项目测试 | 科研项目) - {sampleID} '
+    pro_subject = f'样本引物合成订购 (自动发送) - {sampleID} '
     test_message = f'样本ID：{sampleID}\n注：该引物合成用于(预先订购 | 位点追加 | 项目测试 | 科研项目)其中之一。\n引物结果：{os.path.basename(primer_result)}（见附件）'
-    pro_message = f'样本ID：{sampleID}\n\nCMS审核结果：已通过\n\n引物结果：{os.path.basename(primer_result)}（见附件）'
+    pro_message = f'样本ID：{sampleID}\nCMS审核结果：已通过\n引物结果：{os.path.basename(primer_result)}（见附件）'
     subject = test_subject if skip_review else pro_subject
     message = test_message if skip_review else pro_message
 
@@ -1388,39 +1403,147 @@ def check_order(sampleID, primer_result, skip_review):
     if email_status == 0:
         # 如果EmailSent是0，发送邮件并更新数据库
         if skip_review:
-            emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-            update_email_status(sampleID, 'monitor_order', order_date)
+            if send_email:
+                emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
+                update_email_status(sampleID, 'monitor_order', order_date)
+
         else:
-            sample_local = determine_sample_location(sampleID)
-            # TODO：增加循环判断，邮箱日期监控
-    elif email_status == 1:
-        # 如果EmailSent是1，不发送邮件
-        logger.info(f"Email has already been sent for SampleID: {sampleID}")
-    elif email_status == 2:
-        # 如果EmailSent是2，不需要发送邮件
-        logger.info(f"Email does not need to be sent for SampleID: {sampleID}")
+            program_time = datetime.datetime.now()
+            start_time = datetime.datetime.now()
+            check_interval_minutes = int(config['check_interval_minutes'])  # 检测时间
+            check_frequency = datetime.timedelta(minutes=check_interval_minutes)  # min转换s
+            email_cycle = int(config['email_interval_days'])  # 邮件预警周期
+            max_days_to_check = int(config['max_interval_days'])  # 最大检测周期
+            email_days = generate_testing_periods(email_cycle, max_days_to_check)  # 周期内天数
+            is_first_check = True  # 持续监测预警
+            last_email_sent = None  # 发送邮件标志
+
+            while True:
+                status_abbr, status_desc = get_audit_status(sampleID, sample_local)
+                review_status = f'{status_abbr}({status_desc})'
+
+                # 审核通过
+                if status_abbr in ['YWC', 'YSH', 'BGYSH']:
+                    if send_email:
+                        emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
+                        update_email_status(sampleID, 'monitor_order', order_date, review_status)
+                    logger.info('Complete the sample primer design and send the order!')
+                    break
+
+                # 检测中
+                elif status_abbr in ['JCZ', 'DSH', 'BGDSH']:
+                    if is_first_check:
+                        subject = f'样本审核状态持续检测 - {sampleID}'
+                        message = f'样本ID {sampleID} 审核状态持续检测中···\n目前样本审核状态：{review_status}。\n注意：在订单发送之前，审核人员可查看附件的引物订单检查错误，并告知程序管理人员终止自动发送程序。\n提示：程序会按照自定义时间检测CMS系统审核状态，等待审核状态发生改变，该引物订单会自动发送订购。'
+                        if send_email:
+                            emit(subject, message, to_addrs=toaddrs, cc_addrs=cc)
+                        is_first_check = False
+
+                    # 根据自定义时间间隔等待下一次检测
+                    current_time = datetime.datetime.now()
+
+                    # 等待时间
+                    time_to_wait = check_frequency - (current_time - start_time)
+                    if time_to_wait.total_seconds() > 0:
+                        time.sleep(time_to_wait.total_seconds())
+
+                    # 等待后继续算时间间隔
+                    current_time = datetime.datetime.now()
+                    time_diff = current_time - start_time
+                    logger.info(f'The current time is {current_time}, Waiting {time_diff}')
+
+                    # 若时间间隔已经大于检测间隔时间
+                    if time_diff >= check_frequency:
+                        # 计算过去的天数
+                        days_since_last = (current_time - program_time).days
+                        days_since_last_email = int(days_since_last)
+                        program_time_formatted = program_time.strftime('%Y-%m-%d %H:%M:%S:%f')
+                        current_time_formatted = current_time.strftime('%Y-%m-%d %H:%M:%S:%f')
+                        if days_since_last_email in email_days:
+                            if days_since_last_email < max_days_to_check:
+                                if last_email_sent is None or (current_time - last_email_sent).days >= email_cycle:
+                                    subject = f'样本审核状态超过 {days_since_last_email} 天未更新提醒 - {sampleID} '
+                                    message = f'样本ID：{sampleID}\nCMS审核结果：检测到已经超过 {days_since_last_email} 天未通过审核，请审核人员检查并更新状态！\n检测时间：{program_time_formatted} —— {current_time_formatted}\n 。'
+                                    if send_email:
+                                        emit(subject, message)
+                                    last_email_sent = current_time
+                            else:
+                                if last_email_sent is None or (current_time - last_email_sent).days >= email_cycle:
+                                    subject = f'样本审核状态超过半个月未更新警告 - {sampleSn} '
+                                    message = f'样本ID：{sampleSn}\nCMS审核结果：检测到已经超过半个月未通过审核，请审核人员检查并更新状态！\n检测时间：{program_time_formatted} —— {current_time_formatted}\n警告：该样本审核状态最后一次检测，程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
+                                    if send_email:
+                                        emit(subject, message)
+                                    logger.info(
+                                        f'The program has been running for more than {max_days_to_check} days. Exiting program.')
+                                    break
+                        # 重置 start_time
+                        start_time = datetime.datetime.now()
+
+                    else:
+                        time_to_wait = check_frequency - time_diff
+                        if time_to_wait.total_seconds() > 0:
+                            time.sleep(time_to_wait.total_seconds())
+
+                # 检测终止
+                else:
+                    subject = f'样本状态检测异常警告 - {sampleID}'
+                    message = f'警告：样本ID {sampleID} 样本状态检测异常。\nCMS审核状态：{review_status}\n提示：程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
+                    if send_email:
+                        emit(subject, message, to_addrs=toaddrs, cc_addrs=cc)
+                        update_email_status(sampleID, 'monitor_order', order_date, review_status=review_status,
+                                            email_sent=2)
+                    logger.error(
+                        f'Sample ID {sampleID} Detect the anomaly and exit the program. Please check the relevant data immediately and take appropriate action.')
+                    sys.exit(1)
+
+    elif email_status in [1, 2]:
+        # 如果EmailSent是1或是2，不发送邮件
+        logger.info(f"No action needed for SampleID: {sampleID} as EmailSent is {email_status}")
+        sys.exit(0)
+
     else:
         # 如果EmailSent是None或其他值，发送错误消息并退出程序
-        logger.error(f"Unexpected value for EmailSent or no record found for SampleID: {sampleID}")
+        logger.error(f"Unexpected EmailSent status for SampleID: {sampleID}")
         sys.exit(1)
 
 
-def execute():
-    file_path = 'working/NGS231223-150WX.mrd_selected.tsv'
-    mold = 'sg'
-    send_email = False
-    email_interval = 10
-    exit_threshold = 30
-    skip_snp_design = False
-    skip_hot_design = False
-    skip_driver_design = False
-    skip_review = False
-    cancer_id = None
-    url = config['mfe_primer']
-    out_dir = 'primer_out'
-    outcome_dir = os.path.join(os.path.abspath(out_dir), 'primer_outcome')
+def execute(args):
+    global DEBUG
+    global db_handler
+
+    # 确定 DEBUG 模式：如果命令行参数指定了 --debug，则使用该参数，否则使用配置文件中的设置
+    DEBUG = args.debug if args.debug else config.get('DEBUG', False)
+
+    # 使用 DEBUG 变量
+    if DEBUG:
+        # 运行调试模式下的代码
+        logger.info("Running in debug mode...")
+    else:
+        # 运行非调试模式下的代码
+        logger.info("Running in normal mode...")
+
+    # 连接数据库
+    db_config = config['DB_CONFIG']
+    db_url = f"mysql+pymysql://{db_config['user']}:{db_config['passwd']}@{db_config['host']}:{db_config['port']}/{db_config['db']}"
+    db_handler = pt.DatabaseHandler(db_url)
+
+    # 设置参数变量
+    file_path = args.input_file
+    mold = args.mold
+    url = args.url
+    cancer_id = args.cancer_id
+    send_email = args.send_email
+    email_interval = args.email_interval
+    exit_threshold = args.exit_threshold
+    skip_snp_design = args.skip_snp
+    skip_hot_design = args.skip_hot
+    skip_driver_design = args.skip_driver
+    skip_review = args.skip_review
+
+    # 输出文件夹处理
+    outcome_dir = os.path.join(os.path.abspath(args.output_dir), 'primer_outcome')
     os.makedirs(outcome_dir, exist_ok=True)
-    order_dir = os.path.join(os.path.abspath(out_dir), 'primer_order')
+    order_dir = os.path.join(os.path.abspath(args.output_dir), 'primer_order')
     os.makedirs(order_dir, exist_ok=True)
 
     # 获取样本ID
@@ -1429,14 +1552,17 @@ def execute():
     # 检查日期，默认10天发邮件提示，超过30天退出程序
     check_sample_date(sampleID, send_email=send_email, email_interval=email_interval, exit_threshold=exit_threshold)
 
+    # 检查样本系统（小阔或千翼）
+    sample_local = check_sample_system(sampleID)
+
     # 检查样本项目
-    handle_mrd_sample(sampleID, send_email=send_email)
+    handle_mrd_sample(sampleID, sample_local, send_email=send_email)
 
     # 读取选点文件
     df = read_loci_file(file_path)
 
     # 判断和处理选点
-    df_loci = loci_examined(df.iloc[0:12], skip_snp_design, skip_hot_design, skip_driver_design, cancer_id=cancer_id,
+    df_loci = loci_examined(df, skip_snp_design, skip_hot_design, skip_driver_design, cancer_id=cancer_id,
                             send_email=send_email)
 
     # 添加 templateID
@@ -1453,3 +1579,37 @@ def execute():
     primer_result = write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, send_email=send_email)
 
     # 检查订单状态
+    check_order(sampleID, primer_result, skip_review, sample_local, send_email)
+
+
+def main():
+    # 设置命令行参数
+    parser = argparse.ArgumentParser(description='Automatic primer design.')
+
+    # 必需的参数
+    parser.add_argument('-m', '--mold', required=True, choices=['sh', 'hz', 'sg', 'dg'],
+                        help='Currently, the order template is only available in sh(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢).')
+    parser.add_argument('-i', '--input_file', required=True, help='Input file path for primer design.')
+    parser.add_argument('-o', '--output_dir', required=True, help='Output directory for primer results and orders.')
+
+    # 可选参数
+    parser.add_argument('--url', default=config['mfe_primer'], help='URL for primer design API.')
+    parser.add_argument('--cancer_id', help='Cancer ID, if applicable.')
+    parser.add_argument('--email_interval', type=int, default=10, help='Interval in days for sending reminder emails.')
+    parser.add_argument('--exit_threshold', type=int, default=30, help='Threshold in days to stop checking and exit.')
+    parser.add_argument('--skip_snp', action='store_true', default=False, help='Skip SNP design if set.')
+    parser.add_argument('--skip_hot', action='store_true', default=False, help='Skip hot design if set.')
+    parser.add_argument('--skip_driver', action='store_true', default=False, help='Skip driver design if set.')
+    parser.add_argument('--skip_review', action='store_true', default=False, help='Skip review process if set.')
+    parser.add_argument('--no_send_email', action='store_false', dest='send_email', default=True,
+                        help='Do not send email if set.')
+    parser.add_argument('--debug', dest='debug', action='store_true', default=False,
+                        help='Run in debug mode (overrides configuration file setting)')
+
+    # 解析命令行参数
+    args = parser.parse_args()
+    execute(args)
+
+
+if __name__ == '__main__':
+    main()
