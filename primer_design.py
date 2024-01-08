@@ -1539,6 +1539,7 @@ def execute(args):
     skip_hot_design = args.skip_hot
     skip_driver_design = args.skip_driver
     skip_review = args.skip_review
+    skip_check = args.skip_check
 
     # 输出文件夹处理
     outcome_dir = os.path.join(os.path.abspath(args.output_dir), 'primer_outcome')
@@ -1552,11 +1553,14 @@ def execute(args):
     # 检查日期，默认10天发邮件提示，超过30天退出程序
     check_sample_date(sampleID, send_email=send_email, email_interval=email_interval, exit_threshold=exit_threshold)
 
-    # 检查样本系统（小阔或千翼）
-    sample_local = check_sample_system(sampleID)
+    # 是否跳过样本检查
+    sample_local = None
+    if not skip_check:
+        # 检查样本系统（小阔或千翼）
+        sample_local = check_sample_system(sampleID)
 
-    # 检查样本项目
-    handle_mrd_sample(sampleID, sample_local, send_email=send_email)
+        # 检查样本项目
+        handle_mrd_sample(sampleID, sample_local, send_email=send_email)
 
     # 读取选点文件
     df = read_loci_file(file_path)
@@ -1600,6 +1604,7 @@ def main():
     parser.add_argument('--skip_snp', action='store_true', default=False, help='Skip SNP design if set.')
     parser.add_argument('--skip_hot', action='store_true', default=False, help='Skip hot design if set.')
     parser.add_argument('--skip_driver', action='store_true', default=False, help='Skip driver design if set.')
+    parser.add_argument('--skip_check', action='store_true', default=False, help='Skip system check if set.')
     parser.add_argument('--skip_review', action='store_true', default=False, help='Skip review process if set.')
     parser.add_argument('--no_send_email', action='store_false', dest='send_email', default=True,
                         help='Do not send email if set.')

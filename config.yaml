@@ -59,9 +59,6 @@ CMS_URL:
     accessToken:
         post_url: http://cms.topgen.com.cn/user/login/auth
         post_data: {'userName': 'bioinfo', 'password': 'Top50800383', 'rememberMe': '1'}
-    apiToken:
-        post_url: http://172.16.10.66/api/v1/auth/login
-        post_data: {'username': 'zsl', 'password': '111111'}
     sampleInfo:
         get_url: http://cms.topgen.com.cn/sample/sample/search
     check_audit:

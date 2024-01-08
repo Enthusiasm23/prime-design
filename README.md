@@ -1,39 +1,112 @@
 # primer-design
 
-#### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
+## 介绍
+引物设计可通过守护进程或命令行工具进行，守护进程是使用systemctl + inotifywait 调用引物设计脚本，命令行工具是直接调用引物设计脚本。
 
-#### 软件架构
-软件架构说明
+## 使用说明
 
+1.  守护进程设置参考[语雀文档](https://www.yuque.com/harley-yf9b4/loy93s/uoobzczbl1giw1hi)。
+2.  命令行工具直接使用 python [primer_design.py](./primer_design.py) 调用。
 
-#### 安装教程
+## 脚本说明
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+1. 参数说明
 
-#### 使用说明
+```text
+# 必须参数
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+# 引物订购公司：(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢)。
+-m {sh,hz,sg,dg}, --mold {sh,hz,sg,dg} 
 
-#### 参与贡献
+# 输入文件，类型可包括excel、csv、txt、tsv、url（带文件名）
+-i INPUT_FILE, --input_file INPUT_FILE
 
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+# 输出文件目录
+-o OUTPUT_DIR, --output_dir OUTPUT_DIR
 
+# 可选参数
 
-#### 特技
+# 根据样本ID时间判断时差，超过提醒
+--email_interval EMAIL_INTERVAL
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+# 根据样本ID时间判断时差，超过退出程序        
+--exit_threshold EXIT_THRESHOLD
+
+# 跳过snp数量的判断
+--skip_snp
+
+# 跳过热点引物设计
+--skip_hot
+
+# 跳过driver优先设计
+--skip_driver
+
+# 跳过样本ID的cms检测（包括是否属于MRD，是否存在CMS中）
+--skip_check
+
+# 跳过样本ID报告审核状态
+--skip_review
+
+# 如果设置了不发任何邮件提醒
+--no_send_email
+
+# DEBUG模式，邮件内容仅发至管理员账户
+--debug
+```
+
+2. config文件说明
+
+详见 [config.yaml](./config.yaml)
+
+4. 命令行举例
+
+- 正常模式
+```shell
+python primer_design.py -m sg -i ./working/NGS231206-124WX.mrd_selected.xlsx -o ./primer_out/
+```
+
+- debug 模式
+```shell
+python primer_design.py -m sg --debug -i ./working/NGS231206-124WX.mrd_selected.xlsx -o ./primer_out/
+```
+
+- 跳过snp数量的判断 (预先设置snp + inhdel 数量< 8不满足质控)
+```shell
+ python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --debug --skip_snp
+```
+
+- 跳过热点引物设计 (若选点文件中无cancer_type_ID列或是不需要热点引物设计，则使用该参数)
+```shell
+python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --debug --skip_hot
+```
+
+- 当然也可以使用 --cancer_id 增加热点，详见[热点数据库](./order_template/pancancer_hotspot_mutation.xlsx)
+```shell
+python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --cancer_id TS01
+```
+
+- 跳过driver优先设计 (若选点文件中无driver_gene列或是不需要driver优先设计，则使用该参数)
+```shell
+python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --debug --skip_driver
+```
+
+- 若只测试引物设计情况，可选择以下方案设计并查看(首先测试的位点文件必须包含 `sampleSn chrom pos ref alt` 这5列数据)，如果想使用`chrom pos`2列设计的话，详见 [primkit](https://github.com/Enthusiasm23/primkit) 。
+```shell
+python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --debug --skip_hot --skip_driver --skip_snp --skip_check --skip_review
+```
+
+- 更多参数使用
+```shell
+python primer_design.py -h
+```
+
+## 其余脚本说明
+
+1. **get_wes_status.py** - 获取CMS中样本的审核状态
+
+```shell
+python get_wes_status.py sample_id1 sample_id2 ...
+```
+
+## 注意：
+建议使用命令行工具嵌入pipeline中运行，守护进程程序暂未测试和使用。
