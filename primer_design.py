@@ -21,7 +21,7 @@ import yaml
 import datetime
 import openpyxl
 from urllib.parse import urlparse
-from sqlalchemy import text, update
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 import warnings
 
@@ -157,7 +157,7 @@ def check_sample_system(sampleSn):
                                                                             new_data['msg']))
             sys.exit(1)
     else:
-        logger.logger('ERROR: new system response.status_code is not equal to 200.')
+        logger.error('ERROR: new system response.status_code is not equal to 200.')
         sys.exit(1)
 
     return 'OLD' if old_data and not new_data else 'NEW' if new_data and not old_data else 'NONE'
@@ -800,7 +800,7 @@ def perform_primer_design(df_no_driver, sampleID, url, outcome_dir, design_num, 
                                                     num)
 
         # Design primers and process results
-        df_res, save_path = design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix=num)
+        df_res, save_path = design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix=str(num))
 
         # Save the DataFrame to a table in the database.
         save_to_database(df_res, table_name='mfe_primers')
@@ -1145,8 +1145,6 @@ def write_sg_order(df_order, df_combined, order_dir, sampleID):
     :param df_combined: DataFrame containing additional data to be written to the '实验用引物对（不需要订购合成）' sheet.
     :param order_dir: Directory where the output Excel file will be saved.
     :param sampleID: Sample identifier used as part of the output file name.
-    :param config: Configuration dictionary containing the path to the order template.
-
     :return: The path of the saved Excel workbook.
     """
     try:
@@ -1159,13 +1157,13 @@ def write_sg_order(df_order, df_combined, order_dir, sampleID):
 
     def write_to_sheet(dataframe, start_row):
         """ Helper function to write data to the Excel sheet """
-        for i, row in dataframe.iterrows():
-            ws_dna.cell(start_row + i, 2, row['PrimerName'])
-            ws_dna.cell(start_row + i, 3, row['Sequence'])
-            ws_dna.cell(start_row + i, 5, row['TubeCount'])
-            ws_dna.cell(start_row + i, 7, row['PurificationMethod'])
-            ws_dna.cell(start_row + i, 8, row['Nmoles'])
-            ws_dna.cell(start_row + i, 12, row['Remarks'])
+        for i, raw in dataframe.iterrows():
+            ws_dna.cell(start_row + i, 2, raw['PrimerName'])
+            ws_dna.cell(start_row + i, 3, raw['Sequence'])
+            ws_dna.cell(start_row + i, 5, raw['TubeCount'])
+            ws_dna.cell(start_row + i, 7, raw['PurificationMethod'])
+            ws_dna.cell(start_row + i, 8, raw['Nmoles'])
+            ws_dna.cell(start_row + i, 12, raw['Remarks'])
 
     write_to_sheet(df_order, 18)
 
@@ -1469,8 +1467,8 @@ def check_order(sampleID, primer_result, skip_review, sample_local, send_email=T
                                     last_email_sent = current_time
                             else:
                                 if last_email_sent is None or (current_time - last_email_sent).days >= email_cycle:
-                                    subject = f'样本审核状态超过半个月未更新警告 - {sampleSn} '
-                                    message = f'样本ID：{sampleSn}\nCMS审核结果：检测到已经超过半个月未通过审核，请审核人员检查并更新状态！\n检测时间：{program_time_formatted} —— {current_time_formatted}\n警告：该样本审核状态最后一次检测，程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
+                                    subject = f'样本审核状态超过半个月未更新警告 - {sampleID} '
+                                    message = f'样本ID：{sampleID}\nCMS审核结果：检测到已经超过半个月未通过审核，请审核人员检查并更新状态！\n检测时间：{program_time_formatted} —— {current_time_formatted}\n警告：该样本审核状态最后一次检测，程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
                                     if send_email:
                                         emit(subject, message)
                                     logger.info(
@@ -1510,6 +1508,7 @@ def check_order(sampleID, primer_result, skip_review, sample_local, send_email=T
 def execute(args):
     global DEBUG
     global db_handler
+    global db_config
 
     # 确定 DEBUG 模式：如果命令行参数指定了 --debug，则使用该参数，否则使用配置文件中的设置
     DEBUG = args.debug if args.debug else config.get('DEBUG', False)

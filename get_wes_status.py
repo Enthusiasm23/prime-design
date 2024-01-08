@@ -8,6 +8,7 @@
 """
 import json
 import logging
+import sys
 import requests
 import argparse
 
@@ -70,7 +71,7 @@ def check_sample_system(sampleSn):
                                                                             new_data['msg']))
             sys.exit(1)
     else:
-        logging.logging('ERROR: new system response.status_code is not equal to 200.')
+        logging.error('ERROR: new system response.status_code is not equal to 200.')
         sys.exit(1)
 
     return 'OLD' if old_data and not new_data else 'NEW' if new_data and not old_data else 'NONE'
