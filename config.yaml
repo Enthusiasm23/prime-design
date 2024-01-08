@@ -88,14 +88,13 @@ API_CMS:
     audit_cms:
         get_url: http://172.16.10.66/api/v1/sample-info?sample_sn=
 
-
 # database
 DB_CONFIG:
-    host: localhost
+    host: '172.16.10.55'
     port: 3306
-    user: root
-    passwd: root
-    db: test_db
+    user: 'ngs'
+    passwd: 'YmcNHC6nG7fBTFYJ'
+    db: 'ngs'
     table: table
 
 # Detection Time (Minutes)
