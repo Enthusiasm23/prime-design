@@ -1,7 +1,7 @@
 # Primer Design
 
 # Debug Mode
-DEBUG: True
+DEBUG: False
 
 # Order Template
 order_template:

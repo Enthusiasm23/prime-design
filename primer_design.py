@@ -1434,7 +1434,7 @@ def check_order(sampleID, primer_result, skip_review, sample_local, send_email=T
                         subject = f'样本审核状态持续检测 - {sampleID}'
                         message = f'样本ID {sampleID} 审核状态持续检测中···\n目前样本审核状态：{review_status}。\n注意：在订单发送之前，审核人员可查看附件的引物订单检查错误，并告知程序管理人员终止自动发送程序。\n提示：程序会按照自定义时间检测CMS系统审核状态，等待审核状态发生改变，该引物订单会自动发送订购。'
                         if send_email:
-                            emit(subject, message, to_addrs=toaddrs, cc_addrs=cc)
+                            emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
                         is_first_check = False
 
                     # 根据自定义时间间隔等待下一次检测
