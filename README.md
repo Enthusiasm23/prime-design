@@ -100,6 +100,26 @@ python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o 
 python primer_design.py -h
 ```
 
+## 数据库说明
+
+数据库为 172.16.10.55 ngs
+
+- **mrd_selection**
+
+    存储处理*mrd.selected.tsv文件后的数据，包括删除位点，增加位点，添加热点等处理。
+
+- **mfe_primers**
+
+    存储引物设计过程的数据
+
+- **primer_combined**
+
+    存储引物设计最终结果与被选中位点附带其他信息的合并数据
+
+- **monitor_order**
+
+    存储检测引物订购单是否发送，以及样本审核状态
+
 ## 其余脚本说明
 
 1. **get_wes_status.py** - 获取CMS中样本的审核状态
