@@ -663,17 +663,13 @@ def design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix='
     return df_res, save_path
 
 
-def save_to_database(df_res, table_name=None):
+def save_to_database(df_res, table_name):
     """
     Saves the given DataFrame to a database table specified in the configuration or the provided table name.
 
     :param df_res: DataFrame to be saved in the database.
-    :param table_name: Optional. The name of the table where the DataFrame will be saved. If not provided, will use default from config.
+    :param table_name: The name of the table where the DataFrame will be saved.
     """
-    # Use the provided table_name or default to the one in config
-    if table_name is None:
-        table_name = db_config.get('table', 'default_table')
-
     db_handler.create_df_table(table_name, df_res)
     db_handler.insert_df(table_name, df_res)
 
@@ -704,7 +700,7 @@ def first_check_driver(df_driver, url, outcome_dir, sampleID):
     df_res, save_path = design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix='driver')
 
     # Save the DataFrame to a table in the database.
-    save_to_database(df_res, table_name='mfe_primers')
+    save_to_database(df_res, 'mfe_primers')
 
     return df_res['TemplateID'].to_list()
 
@@ -803,7 +799,7 @@ def perform_primer_design(df_no_driver, sampleID, url, outcome_dir, design_num, 
         df_res, save_path = design_primers_core(url, outcome_dir, sampleID, result_string, file_suffix=str(num))
 
         # Save the DataFrame to a table in the database.
-        save_to_database(df_res, table_name='mfe_primers')
+        save_to_database(df_res, 'mfe_primers')
 
         if should_exit_loop(df_res, not_used):
             break
@@ -858,7 +854,7 @@ def process_primer_results(df_res, df_design, sampleID, skip_snp_design, send_em
     for column in ['hots', 'Start_Position', 'End_Position']:
         if column not in df_design.columns:
             df_design[column] = None
-    save_to_database(df_design, table_name='mrd_selection')
+    save_to_database(df_design, 'mrd_selection')
 
     df_sample = pd.merge(df_res, df_design, on='TemplateID').drop_duplicates('TemplateID', keep='first')
 
@@ -948,7 +944,7 @@ def process_primer_order(df, mold):
     df_combined.reset_index(drop=True, inplace=True)
 
     # Save to database
-    save_to_database(df_combined, table_name='primer_order')
+    save_to_database(df_combined, 'primer_order')
 
     return df_combined
 
@@ -1193,7 +1189,7 @@ def upsert_to_database(df, table_name, unique_col, update_cols):
 
     # Check if the table exists
     if not inspector.has_table(table_name):
-        save_to_database(df, table_name=table_name)
+        save_to_database(df, table_name)
         return
 
     # Start a transaction
@@ -1219,7 +1215,7 @@ def upsert_to_database(df, table_name, unique_col, update_cols):
                     logger.info(f"Updated record with {unique_col} = {row[unique_col]} in '{table_name}' table.")
                 else:
                     # Record does not exist, insert the new record
-                    save_to_database(df.iloc[[index]], table_name=table_name)
+                    save_to_database(df.iloc[[index]], table_name)
                     logger.info(
                         f"Inserted new record with {unique_col} = {row[unique_col]} into '{table_name}' table.")
             except SQLAlchemyError as e:
@@ -1527,30 +1523,34 @@ def execute(args):
     db_handler = pt.DatabaseHandler(db_url)
 
     # 设置参数变量
-    file_path = args.input_file
     mold = args.mold
+    file_path = args.input_file
+    output_dir = args.output_dir
     url = args.url
-    cancer_id = args.cancer_id
     send_email = args.send_email
+    cancer_id = args.cancer_id
     email_interval = args.email_interval
     exit_threshold = args.exit_threshold
+    no_timeout = args.no_timeout
     skip_snp_design = args.skip_snp
     skip_hot_design = args.skip_hot
     skip_driver_design = args.skip_driver
-    skip_review = args.skip_review
     skip_check = args.skip_check
+    skip_review = args.skip_review
+    run_order = args.run_order
 
     # 输出文件夹处理
-    outcome_dir = os.path.join(os.path.abspath(args.output_dir), 'primer_outcome')
+    outcome_dir = os.path.join(os.path.abspath(output_dir), 'primer_outcome')
     os.makedirs(outcome_dir, exist_ok=True)
-    order_dir = os.path.join(os.path.abspath(args.output_dir), 'primer_order')
+    order_dir = os.path.join(os.path.abspath(output_dir), 'primer_order')
     os.makedirs(order_dir, exist_ok=True)
 
     # 获取样本ID
     sampleID = get_sample_id(file_path)
 
     # 检查日期，默认10天发邮件提示，超过30天退出程序
-    check_sample_date(sampleID, send_email=send_email, email_interval=email_interval, exit_threshold=exit_threshold)
+    if not no_timeout:
+        check_sample_date(sampleID, send_email=send_email, email_interval=email_interval, exit_threshold=exit_threshold)
 
     # 是否跳过样本检查
     sample_local = None
@@ -1582,7 +1582,11 @@ def execute(args):
     primer_result = write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, send_email=send_email)
 
     # 检查订单状态
-    check_order(sampleID, primer_result, skip_review, sample_local, send_email)
+    if not run_order:
+        check_order(sampleID, primer_result, skip_review, sample_local, send_email)
+
+    # 返回订单表
+    print(primer_result)
 
 
 def main():
@@ -1590,25 +1594,40 @@ def main():
     parser = argparse.ArgumentParser(description='Automatic primer design.')
 
     # 必需的参数
-    parser.add_argument('-m', '--mold', required=True, choices=['sh', 'hz', 'sg', 'dg'],
+    parser.add_argument('-m', '--mold', required=True, dest='mold', choices=['sh', 'hz', 'sg', 'dg'],
                         help='Currently, the order template is only available in sh(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢).')
-    parser.add_argument('-i', '--input_file', required=True, help='Input file path for primer design.')
-    parser.add_argument('-o', '--output_dir', required=True, help='Output directory for primer results and orders.')
+    parser.add_argument('-i', '--input_file', required=True, dest='input_file',
+                        help='Input file path for primer design.')
+    parser.add_argument('-o', '--output_dir', required=True, dest='output_dir',
+                        help='Output directory for primer results and orders.')
 
     # 可选参数
-    parser.add_argument('--url', default=config['mfe_primer'], help='URL for primer design API.')
-    parser.add_argument('--cancer_id', help='Cancer ID, if applicable.')
-    parser.add_argument('--email_interval', type=int, default=10, help='Interval in days for sending reminder emails.')
-    parser.add_argument('--exit_threshold', type=int, default=30, help='Threshold in days to stop checking and exit.')
-    parser.add_argument('--skip_snp', action='store_true', default=False, help='Skip SNP design if set.')
-    parser.add_argument('--skip_hot', action='store_true', default=False, help='Skip hot design if set.')
-    parser.add_argument('--skip_driver', action='store_true', default=False, help='Skip driver design if set.')
-    parser.add_argument('--skip_check', action='store_true', default=False, help='Skip system check if set.')
-    parser.add_argument('--skip_review', action='store_true', default=False, help='Skip review process if set.')
-    parser.add_argument('--no_send_email', action='store_false', dest='send_email', default=True,
+    parser.add_argument('--url', default=config['mfe_primer'], dest='url',
+                        help='URL for primer design API.')
+    parser.add_argument('--no-email', action='store_false', default=True, dest='send_email',
                         help='Do not send email if set.')
-    parser.add_argument('--debug', dest='debug', action='store_true', default=False,
-                        help='Run in debug mode (overrides configuration file setting)')
+    parser.add_argument('--c-id', dest='cancer_id',
+                        help='Cancer ID, if applicable.')
+    parser.add_argument('--email-freq', type=int, default=10, dest='email_interval',
+                        help='Frequency in days for sending reminder emails.')
+    parser.add_argument('--exit-lim', type=int, default=30, dest='exit_threshold',
+                        help='Time limit in days to stop checking and exit.')
+    parser.add_argument('--no-timeout', action='store_true', dest='no_timeout',
+                        help='Disable time-based program exit.')
+    parser.add_argument('--skip-snp', action='store_true', dest='skip_snp',
+                        help='Skip SNP design if set.')
+    parser.add_argument('--skip-hot', action='store_true', dest='skip_hot',
+                        help='Skip hot design if set.')
+    parser.add_argument('--skip-driver', action='store_true', dest='skip_driver',
+                        help='Skip driver design if set.')
+    parser.add_argument('--skip-check', action='store_true', dest='skip_check',
+                        help='Skip system check if set.')
+    parser.add_argument('--skip-review', action='store_true', dest='skip_review',
+                        help='Skip review process if set.')
+    parser.add_argument('--run-order', action='store_true', dest='run_order',
+                        help='Run the check_order function if set.')
+    parser.add_argument('--debug', action='store_true', dest='debug',
+                        help='Run in debug mode.')
 
     # 解析命令行参数
     args = parser.parse_args()
