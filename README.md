@@ -13,45 +13,92 @@
 1. 参数说明
 
 ```text
-# 必须参数
+## 必需参数 (Required Arguments)
 
-# 引物订购公司：(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢)。
--m {sh,hz,sg,dg}, --mold {sh,hz,sg,dg} 
+### 模板 (Mold)
+- `-m MOLD`, `--mold MOLD`  
+  Currently, the order template is only available in sh(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢).  
+  Required: Yes  
+  Choices: ['sh', 'hz', 'sg', 'dg']
 
-# 输入文件，类型可包括excel、csv、txt、tsv、url（带文件名）
--i INPUT_FILE, --input_file INPUT_FILE
+### 输入文件路径 (Input File Path)
+- `-i INPUT_FILE`, `--input-file INPUT_FILE`  
+  Input file path for primer design.  
+  Required: Yes
 
-# 输出文件目录
--o OUTPUT_DIR, --output_dir OUTPUT_DIR
+### 输出目录 (Output Directory)
+- `-o OUTPUT_DIR`, `--output-dir OUTPUT_DIR`  
+  Output directory for primer results and orders.  
+  Required: Yes
 
-# 可选参数
+## 可选参数 (Optional Arguments)
 
-# 根据样本ID时间判断时差，超过提醒
---email_interval EMAIL_INTERVAL
+### API URL
+- `--url URL`  
+  URL for primer design API.  
+  Default: [URL specified in config]
 
-# 根据样本ID时间判断时差，超过退出程序        
---exit_threshold EXIT_THRESHOLD
+### 不发送邮件 (No Email)
+- `--no-email`  
+  Do not send email if set.  
+  Action: store_false  
+  Default: True
 
-# 跳过snp数量的判断
---skip_snp
+### 肿瘤标识 (Cancer ID)
+- `--c-id CANCER_ID`  
+  Cancer ID, if applicable.
 
-# 跳过热点引物设计
---skip_hot
+### 邮件提醒频率 (Email Frequency)
+- `--email-freq EMAIL_INTERVAL`  
+  Frequency in days for sending reminder emails.  
+  Type: int  
+  Default: 10
 
-# 跳过driver优先设计
---skip_driver
+### 退出时间限制 (Exit Limit)
+- `--exit-lim EXIT_THRESHOLD`  
+  Time limit in days to stop checking and exit.  
+  Type: int  
+  Default: 30
 
-# 跳过样本ID的cms检测（包括是否属于MRD，是否存在CMS中）
---skip_check
+### 禁用基于时间的退出 (Disable Time-based Exit)
+- `--no-timeout`  
+  Disable time-based program exit.  
+  Action: store_true
 
-# 跳过样本ID报告审核状态
---skip_review
+### 跳过SNP设计 (Skip SNP Design)
+- `--skip-snp`  
+  Skip SNP design if set.  
+  Action: store_true
 
-# 如果设置了不发任何邮件提醒
---no_send_email
+### 跳过热点设计 (Skip Hot Design)
+- `--skip-hot`  
+  Skip hot design if set.  
+  Action: store_true
 
-# DEBUG模式，邮件内容仅发至管理员账户
---debug
+### 跳过Driver设计 (Skip Driver Design)
+- `--skip-driver`
+  Skip driver design if set.
+  Action: store_true
+
+### 跳过系统检查 (Skip System Check)
+- `--skip-check`
+  Skip system check if set.
+  Action: store_true
+
+### 跳过审核过程 (Skip Review Process)
+- `--skip-review`
+  Skip review process if set.
+  Action: store_true
+
+### 运行订单检查 (Run Order Check)
+- `--run-order`
+  Run the check_order function if set.
+  Action: store_true
+
+### 调试模式 (Debug Mode)
+- `--debug`
+  Run in debug mode.
+  Action: store_true
 ```
 
 2. config文件说明
@@ -95,6 +142,16 @@ python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o 
 python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --debug --skip_hot --skip_driver --skip_snp --skip_check --skip_review
 ```
 
+- 跳过样本时间检测（即默认的10天邮件警告，30天退出引物设计程序）
+```shell
+python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --no-timeout
+```
+
+- 运行订单发送检测（默认不运行订单发送）
+```shell
+python primer_design.py -m sg -i ./working/NGS231124-168WX.mrd_selected.xlsx -o ./primer_out/ --run-order
+```
+
 - 更多参数使用
 ```shell
 python primer_design.py -h
@@ -115,6 +172,10 @@ python primer_design.py -h
 - **primer_combined**
 
     存储引物设计最终结果与被选中位点附带其他信息的合并数据
+
+- **primer_order**
+
+    存储订单表数据
 
 - **monitor_order**
 
