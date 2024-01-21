@@ -1504,7 +1504,6 @@ def check_order(sampleID, primer_result, skip_review, sample_local, send_email=T
 def execute(args):
     global DEBUG
     global db_handler
-    global db_config
 
     # 确定 DEBUG 模式：如果命令行参数指定了 --debug，则使用该参数，否则使用配置文件中的设置
     DEBUG = args.debug if args.debug else config.get('DEBUG', False)
@@ -1582,7 +1581,7 @@ def execute(args):
     primer_result = write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, send_email=send_email)
 
     # 检查订单状态
-    if not run_order:
+    if run_order:
         check_order(sampleID, primer_result, skip_review, sample_local, send_email)
 
     # 返回订单表
