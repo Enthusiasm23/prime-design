@@ -1491,6 +1491,10 @@ def check_order(sampleID, primer_result, skip_review, sample_local, send_email=T
                     sys.exit(1)
 
     elif email_status in [1, 2]:
+        #
+        if email_status == 1 and DEBUG:
+            if send_email:
+                emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
         # 如果EmailSent是1或是2，不发送邮件
         logger.info(f"No action needed for SampleID: {sampleID} as EmailSent is {email_status}")
         sys.exit(0)
