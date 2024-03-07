@@ -33,8 +33,7 @@ def check_order(sampleID, primer_result):
     email_status = check_email_sent(sampleID, 'monitor_order')
 
     if email_status == 0:
-        sample_local = check_sample_system(sampleID)
-        status_abbr, status_desc = get_audit_status(sampleID, sample_local)
+        status_abbr, status_desc = get_audit_status(sampleID)
         review_status = f'{status_abbr}({status_desc})'
 
         # 审核通过

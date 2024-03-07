@@ -1,9 +1,8 @@
-numpy==1.23.2
-numpy==1.24.3
-openpyxl==3.1.2
-pandas==2.0.2
-primkit==0.1.6
-PyYAML==6.0.1
-Requests==2.31.0
-SQLAlchemy==2.0.23
-pymysql==1.0.0
+numpy>=1.24.3
+openpyxl>=3.1.2
+pandas>=2.0.2
+primkit>=0.1.6
+PyYAML>=6.0.1
+Requests>=2.31.0
+SQLAlchemy>=2.0.23
+pymysql>=1.0.0

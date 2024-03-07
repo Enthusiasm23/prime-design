@@ -8,6 +8,16 @@
 1.  守护进程设置参考[语雀文档](https://www.yuque.com/harley-yf9b4/loy93s/uoobzczbl1giw1hi)。
 2.  命令行工具直接使用 python [primer_design.py](./primer_design.py) 调用。
 
+## 文件说明
+
+1. **order_template** - 存储订单模板和热点数据库文件
+
+2. **original_script** - ~~原守护进程使用的废弃脚本即工具（备份使用）~~
+
+3. **config.yaml** - 存储引物设计脚本可自定义配置
+
+4. **requirements.txt** - 保证脚本使用的python包（不强制要求版本，较新即可）
+
 ## 脚本说明
 
 1. 参数说明
@@ -107,12 +117,17 @@
 
 4. 命令行举例
 
-- 正常模式
+- 正常模式（不发送订单）
 ```shell
 python primer_design.py -m sg -i ./working/NGS231206-124WX.mrd_selected.xlsx -o ./primer_out/
 ```
 
-- debug 模式
+- 正常模式（检测审核状态并发送订单）
+```shell
+python primer_design.py -m sg -i ./working/NGS231206-124WX.mrd_selected.xlsx -o ./primer_out/ --run-order
+```
+
+- debug 模式 (命令传入--debug优先级高于config.yaml文件中的DEBUG设置)
 ```shell
 python primer_design.py -m sg --debug -i ./working/NGS231206-124WX.mrd_selected.xlsx -o ./primer_out/
 ```
@@ -185,8 +200,16 @@ python primer_design.py -h
 
 1. **get_wes_status.py** - 获取CMS中样本的审核状态
 
-```shell
+```bash
 python get_wes_status.py sample_id1 sample_id2 ...
+```
+
+2. **sample_status_watcher.py** - 检测样本审核状态，并发送邮件（生产模式）
+
+该脚本从主脚本**primer_design.py**中抽屉出来的函数，即`--run-order`参数控制的功能（注意该脚本无debug模式）。
+
+```bash
+python sample_status_watcher.py -s sample_id -p primer_result
 ```
 
 ## 注意：

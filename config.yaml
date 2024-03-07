@@ -1,7 +1,7 @@
 # Primer Design
 
 # Debug Mode
-DEBUG: True
+DEBUG: False
 
 # Order Template
 order_template:
@@ -53,7 +53,6 @@ emails:
           bcc:
             - fenglibao@topgen.com.cn
 
-
 # CMS URL
 CMS_URL:
     accessToken:
@@ -61,8 +60,6 @@ CMS_URL:
         post_data: {'userName': 'bioinfo', 'password': 'Top50800383', 'rememberMe': '1'}
     sampleInfo:
         get_url: http://cms.topgen.com.cn/sample/sample/search
-    check_audit:
-        post_url: http://172.16.10.66/api/v1/backend/sample/check-audit
 
 # URL header
 header: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36'}
@@ -72,21 +69,6 @@ MRD_ID: ['0204046', '0204047', '0204048', '0801027']
 
 # primer design url
 mfe_primer: https://mfeprimer3.igenetech.com/muld
-
-# CMS API
-API_CMS:
-    old_cms:
-        post_url: http://cms.topgen.com.cn/user/login/auth
-        post_data: {'userName': 'bioinfo', 'password': 'Top50800383', 'rememberMe': '1'}
-    old_search:
-        get_url: http://cms.topgen.com.cn/sample/sample/search
-    new_cms:
-        detail_url: https://cms.hztopgen.com.cn/api/topgenApi/topgen/findSampleDetil
-        order_url: https://cms.hztopgen.com.cn/api/topgenApi/topgen/findOrderDetil
-        # new_header = {"Authorization": "Basic {}".format(str(base64.b64encode("NGSLC:Topgen123".encode("utf-8")), "utf-8"))}
-        new_header: {'Authorization': 'Basic TkdTTEM6VG9wZ2VuMTIz'}
-    audit_cms:
-        get_url: http://172.16.10.66/api/v1/sample-info?sample_sn=
 
 # database
 DB_CONFIG:
@@ -105,3 +87,51 @@ email_interval_days: 3
 
 # Maximum interval date (days)
 max_interval_days: 15
+
+# Sample review status
+review_status: {
+    'YCY': '已采样',
+    'YSC': '已送出',
+    'YSY': '已收样',
+    'JCZ': '检测中',
+    'FJZ': '复检中',
+    'YWC': '已完成',
+    'JCZZ': '检测终止',
+    'BHG': '不合格',
+    'BGDSH': '报告待审核',
+    'BGWTG': '报告审核未通过',
+    'BGYSH': '报告已审核',
+    'BYZ': '补样中',
+    'ZTJC': '暂停检测'
+}
+
+# Order template default parameters
+f_sequence_prefix: 'GTTCAGAGTTCTACAGTCCGACGATCNNWNNW'
+r_sequence_prefix: 'CTTGGCACCCGAGAATTCCANNWNNW'
+TubeCount: 1
+TotalQuantityOD: ''
+PurificationMethod: 'HAP'
+Nmoles: 1
+Modification5Prime: ''
+Modification3Prime: ''
+DualLabelModification: 1
+Remarks: '1管TE溶解为50uM浓度'
+
+# Primer default parameters
+PRIMER_PARAMS: {
+    'DB': 'hg19.fa',        # hg19.fa/mm10.fa
+    'SnpFilter': 'yes',     # yes/no
+    'PrimerMinSize': '17',  # 15-35
+    'PrimerOptSize': '22',  # 15-35
+    'PrimerMaxSize': '25',  # 15-35
+    'PrimerMinTm': '58',    # 0-100
+    'PrimerOptTm': '60',    # 0-100
+    'PrimerMaxTm': '62',    # 0-100
+    'ProdMinSize': '80',    # 0-1000000
+    'ProdMaxSize': '120',   # 0-1000000
+    'DimerScore': '5',      # 3-20
+    'HairpinScore': '5',    # 3-20
+    'Tm': '47',             # 0-100
+    'SpecMinSize': '0',     # 0-1000000
+    'SpecMaxSize': '500',   # 0-1000000
+}
