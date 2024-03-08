@@ -24,11 +24,25 @@ from urllib.parse import urlparse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 import warnings
+import http_api
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 # 设置日志
 logger = logging.getLogger(__name__)
+
+httpApi = http_api.HttpApi()
+
+sid = 0
+
+def doBack(info, path):
+    global sid
+    httpApi.backDesign(sid, info, path)
+
+def doError(err):
+    global sid
+    logging.error(err)
+    httpApi.backDesign(sid, err, '')
 
 # 读取配置文件
 with open('config.yaml', 'r', encoding='utf-8') as f:
@@ -138,7 +152,6 @@ def get_cms_accessToken():
     except Exception as e:
         logger.error(f'ERROR: Error getting sample audit status of cms system. The specific reason is {e}')
         sys.exit(1)
-
 
 def get_project_name(sampleSn):
     """
@@ -424,7 +437,7 @@ def loci_examined(df_loci, skip_snp_design, skip_hot_design, skip_driver_design,
                 return process_hotspots_logic()
             return df_loci
         else:
-            logging.error(f'样本ID: {sampleSn}, SNP + INDEL数量小于8, 已发邮件至审核人员处理！')
+            doError(f'样本ID: {sampleSn}, SNP + INDEL数量小于8, 已发邮件至审核人员处理！')
             if send_email:
                 subject = f'样本位点数量检查警告 - {sampleSn}'
                 message = f'警告：样本ID {sampleSn} 位点数量不足。\n质控结果：SNP位点为: {snp_count} 个，INDEL位点为: {indel_count} 个，SNP+INDEL位点数量为: {snp_count + indel_count} 。\n提示：当 SNP + INDEL 数量小于8，需要审核人员审核处理！\n'
@@ -707,7 +720,7 @@ def process_primer_results(df_res, df_design, sampleID, skip_snp_design, send_em
         message = f"警告：样本ID {sampleID} 引物结果检查\n质控结果：{reason}数量为 {sample_count}\n提示：当引物结果数量小于12个或是自身位点小于8个时，不满足质控要求，需要审核人员审核处理。\n程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。"
         if send_email:
             emit(subject, message)
-        logging.error(f'样本ID：{sampleID}, 引物结果未通过质控，请立即检查相关数据并采取适当措施！')
+        doError(f'样本ID：{sampleID}, 引物结果未通过质控，请立即检查相关数据并采取适当措施！')
         sys.exit(1)
 
     if not skip_snp_design:
@@ -846,7 +859,7 @@ def write_sh_order(df_sample, dataframe, order_path, sampleID):
         order_template = config['order_template']['sh']
         wb = openpyxl.load_workbook(order_template)
     except Exception as e:
-        logging.error(f'ERROR: {e}')
+        doError(f'ERROR: {e}')
         sys.exit(1)
 
     ws_dna = wb['DNA合成订购表']
@@ -912,7 +925,7 @@ def write_hz_order(df_sample, dataframe, order_path, sampleID):
         order_template = config['order_template']['hz']
         wb = openpyxl.load_workbook(order_template)
     except Exception as e:
-        logging.error(f'ERROR: {e}')
+        doError(f'ERROR: {e}')
         sys.exit(1)
     ws_dna = wb['DNA合成订购表']
 
@@ -975,7 +988,7 @@ def write_dg_order(df_sample, dataframe, order_path, sampleID):
         order_template = config['order_template']['dg']
         wb = openpyxl.load_workbook(order_template)
     except Exception as e:
-        logging.error(f'ERROR: {e}')
+        doError(f'ERROR: {e}')
         sys.exit(1)
     ws_dna = wb['订单表格']
 
@@ -1257,7 +1270,6 @@ def generate_testing_periods(cycle, max_cycle):
         periods.append(max_cycle)
     return periods
 
-
 def check_order(sampleID, primer_result, skip_review, send_email=True):
     """
     Monitors and manages the process of checking sample audit status, sending emails, and updating database.
@@ -1407,6 +1419,10 @@ def execute(args):
     global DEBUG
     global db_handler
 
+    global sid
+
+    sid = args.id
+
     # 确定 DEBUG 模式：如果命令行参数指定了 --debug，则使用该参数，否则使用配置文件中的设置
     DEBUG = args.debug if args.debug else config.get('DEBUG', False)
 
@@ -1485,12 +1501,16 @@ def execute(args):
     # 返回订单表
     print(primer_result)
 
+    doBack('', primer_result)
+
 
 def main():
     # 设置命令行参数
     parser = argparse.ArgumentParser(description='Automatic primer design.')
 
     # 必需的参数
+    parser.add_argument('-id', '--sid', required=True, dest='id',
+                        help='ID for primer design.')
     parser.add_argument('-s', '--sample-id', required=True, dest='sampleID',
                         help='Sample ID for primer design.')
     parser.add_argument('-m', '--mold', required=True, dest='mold', choices=['sh', 'hz', 'sg', 'dg'],
