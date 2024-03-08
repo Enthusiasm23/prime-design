@@ -4,9 +4,10 @@
 @Project : TopGen
 @Time    : 2024/1/17 14:51
 @Author  : lbfeng
-@File    :  sample_status_watcher.py
+@File    : sample_status_watcher.py
 """
 import sys
+import datetime
 import primkit as pt
 from primer_design import emit
 from primer_design import check_email_sent
@@ -25,8 +26,9 @@ def check_order(sampleID, primer_result):
     :param sampleID: The unique identifier for the sample.
     :param primer_result: The file path of the primer result that will be attached to the email.
     """
-    toaddrs = config['emails']['setup']['log_toaddrs']
-    cc = config['emails']['setup']['log_cc']
+    toaddrs = config['emails']['setup']['order_toaddrs']
+    qc_toaddrs = config['emails']['setup']['qc_toaddrs']
+    cc = config['emails']['setup']['cc']
     subject = f'样本引物合成订购 (自动发送) - {sampleID} '
     message = f'样本ID：{sampleID}\nCMS审核结果：已通过\n引物结果：{os.path.basename(primer_result)}（见附件）'
 
@@ -40,7 +42,7 @@ def check_order(sampleID, primer_result):
         if status_abbr in ['YWC', 'YSH', 'BGYSH']:
             if send_email:
                 emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-                update_email_status(sampleID, 'monitor_order', order_date, review_status)
+                update_email_status(sampleID, 'monitor_order', review_status)
             logger.info('Complete the sample primer design and send the order!')
             sys.exit(0)
 
@@ -48,15 +50,16 @@ def check_order(sampleID, primer_result):
         elif status_abbr in ['JCZ', 'DSH', 'BGDSH']:
             subject = f'样本审核状态持续检测 - {sampleID}'
             message = f'样本ID {sampleID} 审核状态持续检测中···\n目前样本审核状态：{review_status}。\n注意：在订单发送之前，审核人员可查看附件的引物订单检查错误，并告知程序管理人员终止自动发送程序。\n提示：程序会按照自定义时间检测CMS系统审核状态，等待审核状态发生改变，该引物订单会自动发送订购。'
-            emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-            logger.info('Sample primer design order is being sent automatically.')
+            emit(subject, message, attachments=[primer_result], to_addrs=qc_toaddrs)
+            logger.error('Primer order review status not updated, waiting for CMS review status update...')
+            sys.exit(1)
 
         # 检测终止
         else:
             subject = f'样本状态检测异常警告 - {sampleID}'
             message = f'警告：样本ID {sampleID} 样本状态检测异常。\nCMS审核状态：{review_status}\n提示：程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
-            emit(subject, message, to_addrs=toaddrs, cc_addrs=cc)
-            update_email_status(sampleID, 'monitor_order', order_date, review_status=review_status,
+            emit(subject, message, to_addrs=qc_toaddrs)
+            update_email_status(sampleID, 'monitor_order', review_status=review_status,
                                 email_sent=2)
             logger.error(
                 f'Sample ID {sampleID} Detect the anomaly and exit the program. Please check the relevant data immediately and take appropriate action.')

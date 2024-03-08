@@ -1160,7 +1160,7 @@ def write_order(sampleID, df_design, df_res, order_dir, mold, skip_snp_design, s
         "OrderFile": [primer_result],  # 订单文件
         "ReviewStatus": [""],  # 审核状态
         "EmailSent": [0],  # 是否发送过邮件：0 - 未发送订购单，1 - 已发送过订购单，2 - 不需要发送订购
-        "DesignDate": [datetime.date.today()],  # 设计完成时间
+        "DesignDate": [pd.to_datetime(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))],  # 设计完成时间
         "OrderDate": [datetime.date.today()],  # 订购时间
         "OrderCompany": [mold]  # 订购公司
     }, index=[0])
@@ -1206,13 +1206,12 @@ def check_email_sent(sample_id, table_name):
             return None
 
 
-def update_email_status(sample_id, table_name, order_date, review_status=None, email_sent=1):
+def update_email_status(sample_id, table_name, review_status=None, email_sent=1):
     """
     Updates the database to mark the email sent status for a given sample ID, and optionally update the review status.
 
     :param sample_id: The sample ID in the database.
     :param table_name: The name of the table in the database.
-    :param order_date: The date when the order was sent.
     :param review_status: Optional. The new review status for the sample.
     :param email_sent: The status to set for EmailSent. Default is 1.
     """
@@ -1230,6 +1229,7 @@ def update_email_status(sample_id, table_name, order_date, review_status=None, e
     """)
 
     # Prepare a reference dictionary
+    order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     params = {
         "email_sent": email_sent,
         "order_date": order_date,
@@ -1272,13 +1272,19 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
     If the sample is still under review, the function waits for a predefined interval before rechecking.
     If the sample fails the audit or experiences an anomaly, an alert email is sent, and the function exits.
     """
-    order_date = datetime.datetime.now().strftime('%Y-%m-%d')
-    toaddrs = config['emails']['setup']['log_toaddrs'] if DEBUG else config['emails']['setup']['order_toaddrs']
-    cc = config['emails']['setup']['log_cc'] if DEBUG else config['emails']['setup']['cc']
+    check_toaddrs = config['emails']['setup']['log_toaddrs']
+    qc_toaddrs = config['emails']['setup']['qc_toaddrs']
+    order_toaddrs = config['emails']['setup']['order_toaddrs']
+    log_cc = config['emails']['setup']['log_cc']
+    order_cc = config['emails']['setup']['cc']
     test_subject = f'样本引物合成订购 ( 预先订购 | 位点追加 | 项目测试 | 科研项目) - {sampleID} '
     pro_subject = f'样本引物合成订购 (自动发送) - {sampleID} '
     test_message = f'样本ID：{sampleID}\n注：该引物合成用于(预先订购 | 位点追加 | 项目测试 | 科研项目)其中之一。\n引物结果：{os.path.basename(primer_result)}（见附件）'
     pro_message = f'样本ID：{sampleID}\nCMS审核结果：已通过\n引物结果：{os.path.basename(primer_result)}（见附件）'
+
+    toaddrs = check_toaddrs if DEBUG else order_toaddrs
+    qc_toaddrs = check_toaddrs if DEBUG else qc_toaddrs
+    cc = log_cc if DEBUG else order_cc
     subject = test_subject if skip_review else pro_subject
     message = test_message if skip_review else pro_message
 
@@ -1289,7 +1295,7 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
         if skip_review:
             if send_email:
                 emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-                update_email_status(sampleID, 'monitor_order', order_date)
+                update_email_status(sampleID, 'monitor_order')
 
         else:
             program_time = datetime.datetime.now()
@@ -1310,7 +1316,7 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
                 if status_abbr in ['YWC', 'YSH', 'BGYSH']:
                     if send_email:
                         emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-                        update_email_status(sampleID, 'monitor_order', order_date, review_status)
+                        update_email_status(sampleID, 'monitor_order', review_status)
                     logger.info('Complete the sample primer design and send the order!')
                     break
 
@@ -1320,7 +1326,7 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
                         subject = f'样本审核状态持续检测 - {sampleID}'
                         message = f'样本ID {sampleID} 审核状态持续检测中···\n目前样本审核状态：{review_status}。\n注意：在订单发送之前，审核人员可查看附件的引物订单检查错误，并告知程序管理人员终止自动发送程序。\n提示：程序会按照自定义时间检测CMS系统审核状态，等待审核状态发生改变，该引物订单会自动发送订购。'
                         if send_email:
-                            emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
+                            emit(subject, message, attachments=[primer_result], to_addrs=qc_toaddrs)
                         is_first_check = False
 
                     # 根据自定义时间间隔等待下一次检测
@@ -1349,14 +1355,14 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
                                     subject = f'样本审核状态超过 {days_since_last_email} 天未更新提醒 - {sampleID} '
                                     message = f'样本ID：{sampleID}\nCMS审核结果：检测到已经超过 {days_since_last_email} 天未通过审核，请审核人员检查并更新状态！\n检测时间：{program_time_formatted} —— {current_time_formatted}\n 。'
                                     if send_email:
-                                        emit(subject, message)
+                                        emit(subject, message, to_addrs=qc_toaddrs)
                                     last_email_sent = current_time
                             else:
                                 if last_email_sent is None or (current_time - last_email_sent).days >= email_cycle:
                                     subject = f'样本审核状态超过半个月未更新警告 - {sampleID} '
                                     message = f'样本ID：{sampleID}\nCMS审核结果：检测到已经超过半个月未通过审核，请审核人员检查并更新状态！\n检测时间：{program_time_formatted} —— {current_time_formatted}\n警告：该样本审核状态最后一次检测，程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
                                     if send_email:
-                                        emit(subject, message)
+                                        emit(subject, message, to_addrs=qc_toaddrs)
                                     logger.info(
                                         f'The program has been running for more than {max_days_to_check} days. Exiting program.')
                                     break
@@ -1373,8 +1379,8 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
                     subject = f'样本状态检测异常警告 - {sampleID}'
                     message = f'警告：样本ID {sampleID} 样本状态检测异常。\nCMS审核状态：{review_status}\n提示：程序将自动退出以防止进一步的数据处理。\n请立即检查相关数据并采取适当措施。'
                     if send_email:
-                        emit(subject, message, to_addrs=toaddrs, cc_addrs=cc)
-                        update_email_status(sampleID, 'monitor_order', order_date, review_status=review_status,
+                        emit(subject, message, to_addrs=qc_toaddrs)
+                        update_email_status(sampleID, 'monitor_order', review_status=review_status,
                                             email_sent=2)
                     logger.error(
                         f'Sample ID {sampleID} Detect the anomaly and exit the program. Please check the relevant data immediately and take appropriate action.')
@@ -1385,7 +1391,7 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
         # 如果EmailSent是2，不发送邮件，项目终止了
         if email_status == 1 and DEBUG:
             if send_email:
-                emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
+                emit(subject, message, attachments=[primer_result], to_addrs=qc_toaddrs)
                 logger.info(f"Email sent to DEBUG addresses for SampleID: {sampleID}.")
         else:
             logger.info(f"No action needed for SampleID: {sampleID} as EmailSent is {email_status}")
