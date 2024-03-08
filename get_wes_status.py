@@ -11,10 +11,21 @@ import logging
 import sys
 import requests
 import argparse
+import http_api
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s - %(message)s')
 
+httpApi = http_api.HttpApi()
+
+def doBack(info, path):
+    global sid
+    httpApi.backDesign(sid, info, path)
+
+def doError(err):
+    global sid
+    logging.error(err)
+    httpApi.backDesign(sid, err, '')
 
 def get_cms_accessToken():
     headers = {
@@ -28,10 +39,10 @@ def get_cms_accessToken():
             logging.info(f'AccessToken obtained successfully, accessToken: {accessToken}')
             return accessToken
         else:
-            logging.error('ERROR: response.status_code is not equal to 200.')
+            doError('ERROR: response.status_code is not equal to 200.')
             sys.exit(1)
     except Exception as e:
-        logging.error(f'ERROR: Error getting sample audit status of cms system. The specific reason is {e}')
+        doError(f'ERROR: Error getting sample audit status of cms system. The specific reason is {e}')
         sys.exit(1)
 
 
@@ -53,10 +64,10 @@ def get_sample_status(sampleSn):
             logging.info(f'Successfully obtained sampleStatus, sampleStatus: {sample_status}')
             return sample_status
         else:
-            logging.error('ERROR: Sample ID does not exist in cms system!')
+            doError('ERROR: Sample ID does not exist in cms system!')
             sys.exit(1)
     except Exception as e:
-        logging.error(
+        doError(
             f'ERROR: An error occurred while getting the item ID of the sample for the cms system. The specific reason is {e}')
         sys.exit(1)
 
