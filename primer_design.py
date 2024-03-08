@@ -1441,7 +1441,7 @@ def execute(args):
     os.makedirs(order_dir, exist_ok=True)
 
     # 获取样本ID
-    sampleID = get_sample_id(file_path)
+    sampleID = args.sampleID
 
     # 检查日期，默认10天发邮件提示，超过30天退出程序
     if not no_timeout:
@@ -1485,6 +1485,8 @@ def main():
     parser = argparse.ArgumentParser(description='Automatic primer design.')
 
     # 必需的参数
+    parser.add_argument('-s', '--sample-id', required=True, dest='sampleID',
+                        help='Sample ID for primer design.')
     parser.add_argument('-m', '--mold', required=True, dest='mold', choices=['sh', 'hz', 'sg', 'dg'],
                         help='Currently, the order template is only available in sh(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢).')
     parser.add_argument('-i', '--input_file', required=True, dest='input_file',

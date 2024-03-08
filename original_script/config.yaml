@@ -54,16 +54,16 @@ emails:
     setting:
           mail_hot: smtp.exmail.qq.com
           mail_port: 465
-          username: fenglibao@topgen.com.cn
-          password: 9KppaTwvB32GQUfp
-          from_addr: fenglibao@topgen.com.cn
+          username: ngs@topgen.com.cn
+          password: 6WX8N3txcCzCdjTZ
+          from_addr: ngs@topgen.com.cn
           send_addr:
             sender:
-            - fenglibao@topgen.com.cn
+            - ngs@topgen.com.cn
             sender_name: TopGen-PD
     toaddrs:
           log_toaddrs:
-            - fenglibao@topgen.com.cn
+            - huangjianfeng@topgen.com.cn
           log_cc:
             - fenglibao@topgen.com.cn
           error_toaddrs:
@@ -86,6 +86,7 @@ emails:
             - ngs@topgen.com.cn
             - yuhaibo@topgen.com.cn
             - fenglibao@topgen.com.cn
+            - huangjianfeng@topgen.com.cn
 
 
 # CMS URL
