@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 with open('config.yaml', 'r', encoding='utf-8') as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
 
+# 连接数据库
+db_config = config['DB_CONFIG']
+db_url = f"mysql+pymysql://{db_config['user']}:{db_config['passwd']}@{db_config['host']}:{db_config['port']}/{db_config['db']}"
+db_handler = pt.DatabaseHandler(db_url)
+
 
 def emit(subject, message, attachments=None, to_addrs=None, cc_addrs=None, bcc_addrs=None):
     """
@@ -56,21 +61,6 @@ def emit(subject, message, attachments=None, to_addrs=None, cc_addrs=None, bcc_a
 
     email_manager.send_email(to_addrs=to_addrs, subject=subject, message=message, cc_addrs=cc_addrs,
                              bcc_addrs=bcc_addrs, attachments=attachments)
-
-
-def get_sample_id(file_path):
-    """
-    Extracts the sample ID from a given file path which can be a URL or a file path.
-
-    :param file_path: The source file URL or file path.
-    :return: The extracted sample ID.
-    """
-    parsed_url = urlparse(file_path)
-    file_name = os.path.basename(parsed_url.path) if parsed_url.scheme and parsed_url.netloc else os.path.basename(
-        file_path)
-    sampleSn = file_name.split('.')[0]
-    sampleID = sampleSn[:-2]
-    return sampleID
 
 
 def check_sample_date(sample_id, send_email=True, email_interval=None, exit_threshold=None):
@@ -1405,7 +1395,6 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
 
 def execute(args):
     global DEBUG
-    global db_handler
 
     # 确定 DEBUG 模式：如果命令行参数指定了 --debug，则使用该参数，否则使用配置文件中的设置
     DEBUG = args.debug if args.debug else config.get('DEBUG', False)
@@ -1418,12 +1407,8 @@ def execute(args):
         # 运行非调试模式下的代码
         logger.info("Running in normal mode...")
 
-    # 连接数据库
-    db_config = config['DB_CONFIG']
-    db_url = f"mysql+pymysql://{db_config['user']}:{db_config['passwd']}@{db_config['host']}:{db_config['port']}/{db_config['db']}"
-    db_handler = pt.DatabaseHandler(db_url)
-
     # 设置参数变量
+    sampleID = args.sampleID
     mold = args.mold
     file_path = args.input_file
     output_dir = args.output_dir
@@ -1445,9 +1430,6 @@ def execute(args):
     os.makedirs(outcome_dir, exist_ok=True)
     order_dir = os.path.join(os.path.abspath(output_dir), 'primer_order')
     os.makedirs(order_dir, exist_ok=True)
-
-    # 获取样本ID
-    sampleID = get_sample_id(file_path)
 
     # 检查日期，默认10天发邮件提示，超过30天退出程序
     if not no_timeout:
@@ -1491,6 +1473,8 @@ def main():
     parser = argparse.ArgumentParser(description='Automatic primer design.')
 
     # 必需的参数
+    parser.add_argument('-s', '--sample-id', required=True, dest='sampleID',
+                        help='Sample ID for primer design.')
     parser.add_argument('-m', '--mold', required=True, dest='mold', choices=['sh', 'hz', 'sg', 'dg'],
                         help='Currently, the order template is only available in sh(上海百力格), hz(湖州河马), sg(上海生工), dg(上海迪赢).')
     parser.add_argument('-i', '--input_file', required=True, dest='input_file',

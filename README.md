@@ -204,12 +204,12 @@ python primer_design.py -h
 python get_wes_status.py sample_id1 sample_id2 ...
 ```
 
-2. **sample_status_watcher.py** - 检测样本审核状态，并发送邮件（生产模式）
+2. **send_orders.py** - 检测样本审核状态，并发送邮件（生产模式）
 
 该脚本从主脚本**primer_design.py**中抽屉出来的函数，即`--run-order`参数控制的功能（注意该脚本无debug模式）。
 
 ```bash
-python sample_status_watcher.py -s sample_id -p primer_result
+python send_orders.py -s sample_id -p primer_result
 ```
 
 ## 注意：
