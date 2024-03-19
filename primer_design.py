@@ -310,31 +310,43 @@ def read_hots_file():
 
 def validate_cancer_type(df_snp, hots_cancer_ids, cancer_id=None):
     """
-    Validates if the DataFrame has 'cancer_type_ID' column or uses the provided cancer_id.
+    Validates if the DataFrame has 'cancer_type_ID' column and its value is valid,
+    or uses the provided cancer_id if 'cancer_type_ID' is missing, 'unknown', or invalid.
+    It issues a warning if no valid cancer_type_ID is found but terminates the program if
+    'cancer_type_ID' is missing and no default cancer_id is provided.
 
     :param df_snp: The DataFrame containing SNP loci data.
-    :param hots_cancer_ids: cancer type ID of hotspot file
-    :param cancer_id: Default cancer type ID if not present in the DataFrame.
-    :return: None
+    :param hots_cancer_ids: cancer type ID of hotspot file.
+    :param cancer_id: Default cancer type ID if not present, 'unknown', or invalid in the DataFrame.
+    :return: A list of resolved cancer IDs.
     """
+    import sys
 
     def check_id(type_id):
         # 判断cancer_type_ID属于热点文件中CANCER_TYPE_ID哪个cancer tree
         return next(filter(lambda x: type_id.startswith(x), hots_cancer_ids), type_id)
 
-    if 'cancer_type_ID' in df_snp.columns:
-        loci_cancer_id = list(set(df_snp['cancer_type_ID']))
-        cancer_res_id = [check_id(k) for k in loci_cancer_id]
-        if not loci_cancer_id or loci_cancer_id[0] == 'unknown':
+    cancer_res_id = []
+
+    if 'cancer_type_ID' in df_snp.columns and df_snp['cancer_type_ID'].notnull().any():
+        valid_ids = [cid for cid in df_snp['cancer_type_ID'] if cid and cid.lower() != 'unknown']
+
+        if valid_ids:
+            cancer_res_id = [check_id(cid) for cid in valid_ids]
+        elif cancer_id:
+            cancer_res_id = [check_id(cancer_id)]
+        else:
             sampleSn = df_snp["sampleSn"].iloc[0] if "sampleSn" in df_snp.columns else "UnknownSample"
             subject = f'样本 cancer_type_ID 检查警告 - {sampleSn}'
-            message = f'警告：样本ID {sampleSn} 检查 cancer_type_ID 为 unknown。\n提示：样本 cancer_type_ID 为空（unknown），无法为其样本增加热点引物 。\n请检查相关数据以确保样本的准确性。'
+            message = f'警告：DataFrame 中 "cancer_type_ID" 为 unknown 或为空，且未提供默认的 cancer_id。\n提示：样本ID {sampleSn} 的 cancer_type_ID 未知，可能无法为其样本增加热点引物。请检查相关数据以确保样本的准确性。'
             emit(subject, message)
     elif cancer_id:
-        loci_cancer_id = [cancer_id]
-        cancer_res_id = [check_id(k) for k in loci_cancer_id]
+        cancer_res_id = [check_id(cancer_id)]
     else:
-        logger.error('ERROR: "cancer_type_ID" is not in the DataFrame and no default cancer_id was provided.')
+        sampleSn = df_snp["sampleSn"].iloc[0] if "sampleSn" in df_snp.columns else "UnknownSample"
+        subject = f'缺少 cancer_type_ID 和默认 cancer_id - {sampleSn}'
+        message = f'错误：DataFrame 中缺少 "cancer_type_ID" 列，且未提供默认的 cancer_id。无法进行进一步分析。'
+        emit(subject, message)
         sys.exit(1)
 
     return cancer_res_id
@@ -378,15 +390,15 @@ def process_hotspots(df_hots, df_loci, cancer_res_id):
     df_combined = pd.concat([df_loci, df_hot], ignore_index=True)
 
     # Fill missing values and adjust data types
-    df_combined['stop'].fillna(df_combined['pos'], inplace=True)
-    df_combined['Start_Position'].fillna(df_combined['pos'], inplace=True)
-    df_combined['End_Position'].fillna(df_combined['stop'], inplace=True)
+    df_combined['stop'] = df_combined['stop'].fillna(df_combined['pos'])
+    df_combined['Start_Position'] = df_combined['Start_Position'].fillna(df_combined['pos'])
+    df_combined['End_Position'] = df_combined['End_Position'].fillna(df_combined['stop'])
     df_combined[['stop', 'Start_Position', 'End_Position']] = df_combined[
         ['stop', 'Start_Position', 'End_Position']].astype(int)
 
     # Forward fill missing values for certain columns
     fill_columns = ['sampleSn', 'cancer_type', 'cancer_type_ID']
-    df_combined[fill_columns] = df_combined[fill_columns].fillna(method='ffill')
+    df_combined[fill_columns] = df_combined[fill_columns].ffill()
 
     return df_combined
 
