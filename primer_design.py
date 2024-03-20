@@ -285,6 +285,11 @@ def read_loci_file(file_path):
             logger.error(f'ERROR: Unknown file type or does not match expected file types for file: {file_path}.')
             sys.exit(1)
 
+        # 检查第二行是否包含中文标题关键字
+        keywords = ['样本编码', '项目简称', '染色体', '起始位置']
+        if any(df.iloc[0].astype(str).str.contains('|'.join(keywords))):
+            df = df.iloc[1:].reset_index(drop=True)
+
         return df
 
     except Exception as e:
@@ -469,15 +474,23 @@ def add_templateID(df_loci):
     has_indel = (df_dup['ref'].str.len() > 1).any() or (df_dup['alt'].str.len() > 1).any()
 
     # Adjust 'stop' and 'pos' based on the presence of 'stop' column and INDELs
+    # First subtract 1 from the POS column
+    df_dup['pos'] = df_dup['pos'].astype(int) - 1
+
+    # Then check whether the stop column exists and perform the corresponding operations
     if 'stop' in df_dup.columns:
-        df_dup['stop'] += 1
-        df_dup['pos'] -= 1
+        # If the stop column exists, convert the type to the one before performing the operation
+        df_dup['stop'] = df_dup['stop'].astype(int) + 1
     else:
+        # If the stop column does not exist, create a stop column based on whether there is an indel
         if has_indel:
             df_dup['stop'] = df_dup.apply(lambda row: row['pos'] + max(len(row['ref']), len(row['alt'])), axis=1)
         else:
-            df_dup['stop'] = df_dup['pos'] + 1
-        df_dup['pos'] -= 1
+            df_dup['stop'] = df_dup['pos'] + 2  # 1 has already been subtracted from the pos column, so add 2 here
+
+    # Make sure that the newly created stop column is also of the integer type
+    if 'stop' in df_dup.columns and df_dup['stop'].dtype != 'int64':
+        df_dup['stop'] = df_dup['stop'].astype(int)
 
     # Create TemplateID
     df_dup['TemplateID'] = df_dup['chrom'] + ':' + df_dup['pos'].astype(str) + '-' + df_dup['stop'].astype(str)
@@ -624,6 +637,9 @@ def process_driver(df_loci, url, outcome_dir, sampleID, skip_driver_design):
         return ''.join(
             [f"{item.split(':')[0]}\t{item.split(':')[1].split('-')[0]}\t{item.split(':')[1].split('-')[1]}\n" for item
              in lst])
+
+    # Convert 'driver' column to numeric, replacing non-numeric values with 0
+    df_loci['driver'] = pd.to_numeric(df_loci['driver'], errors='coerce').fillna(0)
 
     if skip_driver_design or df_loci['driver'].sum() == 0:
         return df_loci, 20, [], ''
@@ -1235,7 +1251,6 @@ def update_email_status(sample_id, table_name, review_status=None, email_sent=1)
     :param email_sent: The status to set for EmailSent. Default is 1.
     """
     engine = db_handler.get_engine()
-
     # Prepare the SQL statement to update the EmailSent, OrderDate, and optionally ReviewStatus
     update_values = "EmailSent = :email_sent, OrderDate = :order_date"
     if review_status is not None:
@@ -1314,8 +1329,7 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
         if skip_review:
             if send_email:
                 emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-                update_email_status(sampleID, 'monitor_order')
-
+                update_email_status(sampleID, 'monitor_order', email_sent=0 if DEBUG else 1)
         else:
             program_time = datetime.datetime.now()
             start_time = datetime.datetime.now()
@@ -1335,7 +1349,7 @@ def check_order(sampleID, primer_result, skip_review, send_email=True):
                 if status_abbr in ['YWC', 'YSH', 'BGYSH']:
                     if send_email:
                         emit(subject, message, attachments=[primer_result], to_addrs=toaddrs, cc_addrs=cc)
-                        update_email_status(sampleID, 'monitor_order', review_status)
+                        update_email_status(sampleID, 'monitor_order', review_status=review_status, email_sent=0 if DEBUG else 1)
                     logger.info('Complete the sample primer design and send the order!')
                     break
 

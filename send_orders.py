@@ -52,7 +52,7 @@ def check_order(sampleID, primer_result, debug):
         # 审核通过
         if status_abbr in ['YWC', 'YSH', 'BGYSH']:
             email_manager.send_email(to_addrs=toaddrs, subject=subject_prefix + subject, message=message, cc_addrs=cc, attachments=[primer_result])
-            update_email_status(sampleID, 'monitor_order', review_status=review_status)
+            update_email_status(sampleID, 'monitor_order', review_status=review_status, email_sent=0 if DEBUG else 1)
             logger.info('Primer design order has been sent.')
             sys.exit(0)
 
