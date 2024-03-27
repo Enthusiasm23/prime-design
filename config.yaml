@@ -38,6 +38,11 @@ emails:
             - linliangyu@topgen.com.cn
             - ngs@topgen.com.cn
             - yuhaibo@topgen.com.cn
+            - lipengju@topgen.com.cn
+            - liangwanning@topgen.com.cn
+            - wanghuiling@topgen.com.cn
+            - luozhaowei@topgen.com.cn
+            - quqian@topgen.com.cn
             - fenglibao@topgen.com.cn
           order_toaddrs:
             - synth@sangon.com
@@ -49,6 +54,11 @@ emails:
             - linliangyu@topgen.com.cn
             - ngs@topgen.com.cn
             - yuhaibo@topgen.com.cn
+            - lipengju@topgen.com.cn
+            - liangwanning@topgen.com.cn
+            - wanghuiling@topgen.com.cn
+            - luozhaowei@topgen.com.cn
+            - quqian@topgen.com.cn
             - fenglibao@topgen.com.cn
           bcc:
             - fenglibao@topgen.com.cn
