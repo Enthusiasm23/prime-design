@@ -18,20 +18,18 @@ emails:
     login:
           host: smtp.exmail.qq.com
           port: 465
-          user: fenglibao@topgen.com.cn
+          user: &admin_email fenglibao@topgen.com.cn  # 创建锚点
           password: 9KppaTwvB32GQUfp
           from: fenglibao@topgen.com.cn
           from_alias: TopGen-PD
     setup:
           log_toaddrs:
-            - fenglibao@topgen.com.cn
+            - *admin_email  # 使用别名
           log_cc:
-            - fenglibao@topgen.com.cn
+            - *admin_email
           error_toaddrs:
-            - fenglibao@topgen.com.cn
-            - kaizhentian@topgen.com.cn
+            - *admin_email
           qc_toaddrs:
-            - wangruyi@sangon.com
             - qiuting@topgen.com.cn
             - wangtianqin@topgen.com.cn
             - chenhuiling@topgen.com.cn
@@ -43,7 +41,7 @@ emails:
             - wanghuiling@topgen.com.cn
             - luozhaowei@topgen.com.cn
             - quqian@topgen.com.cn
-            - fenglibao@topgen.com.cn
+            - *admin_email
           order_toaddrs:
             - synth@sangon.com
           cc:
@@ -59,9 +57,9 @@ emails:
             - wanghuiling@topgen.com.cn
             - luozhaowei@topgen.com.cn
             - quqian@topgen.com.cn
-            - fenglibao@topgen.com.cn
+            - *admin_email
           bcc:
-            - fenglibao@topgen.com.cn
+            - *admin_email
 
 # CMS URL
 CMS_URL:
